@@ -657,6 +657,37 @@ const H12_REGIONS="AEAGALARASAUBBBDBHBMBNBOBSBTCACLCOCRCTCUCYDJDMDODZECEGEHERET"
 "FJFMGDGHGMGRGTGUGYHKHNINIQJMJOJTKHKIKNKPKRKWKYLBLCLRLSLYMHMIMOMPMRMWMXMY"+
 "NANHNINTNZOMPAPCPEPGPHPKPRPSPUPWPYPZQASASBSDSGSLSOSSSVSYSZTCTDTNTOTTTWUM"+
 "USUYVCVEVGVIVUWKWSYDYEZM";
+/* Whether getTimeZones() answers with the tzdb primary id or the legacy alias
+   depends on the engine's ICU -- some return Asia/Kolkata, some Asia/Calcutta.
+   ZONES carries the Windows (legacy) spelling, so a straight Set lookup misses
+   on whichever engines disagree with it, and India then reads 24h in MX mode
+   on those and 12h on the others. Match on either spelling.
+
+   Only the aliases ZONES actually uses are listed. selftest asserts each pair
+   really is one zone, by comparing offsets across five decades, so the table
+   cannot quietly rot. */
+const TZALIAS={};
+[["America/Buenos_Aires","America/Argentina/Buenos_Aires"],
+ ["America/Godthab","America/Nuuk"],
+ ["America/Indianapolis","America/Indiana/Indianapolis"],
+ ["Asia/Calcutta","Asia/Kolkata"],
+ ["Asia/Katmandu","Asia/Kathmandu"],
+ ["Asia/Rangoon","Asia/Yangon"],
+ ["Europe/Kiev","Europe/Kyiv"],
+ ["Etc/UTC","UTC"]].forEach(function(pr){
+   TZALIAS[pr[0]]=pr[1]; TZALIAS[pr[1]]=pr[0];
+ });
+/* Identity on engines that do not canonicalise, which is exactly the case
+   where the direct lookup already works. Memoised: zoneIs12 runs per row. */
+const _canonTZ={};
+function canonTZ(tz){
+  if(_canonTZ[tz]===undefined){
+    try{ _canonTZ[tz]=Intl.DateTimeFormat("en-US",{timeZone:tz})
+                          .resolvedOptions().timeZone||tz; }
+    catch(e){ _canonTZ[tz]=tz; }
+  }
+  return _canonTZ[tz];
+}
 let H12ZONES=null;
 function zoneIs12(tz){
   if(!H12ZONES){
@@ -668,7 +699,7 @@ function zoneIs12(tz){
       }catch(e){}
     }
   }
-  return H12ZONES.has(tz);
+  return H12ZONES.has(tz)||H12ZONES.has(TZALIAS[tz]||"")||H12ZONES.has(canonTZ(tz));
 }
 // S.fmt is "12" | "24" | "mx"
 function uses24(tz){ return S.fmt==="24"||(S.fmt==="mx"&&!zoneIs12(tz)); }
@@ -914,6 +945,34 @@ function selftest(){
   eq("MX: India writes 12h",zoneIs12("Asia/Calcutta"),true);
   eq("MX: Brazil writes 24h",zoneIs12("America/Sao_Paulo"),false);
   eq("MX: unmapped Etc/UTC falls back to 24h",zoneIs12("Etc/UTC"),false);
+  /* The engine-dependent case. getTimeZones() hands back one spelling or the
+     other depending on ICU version, so asserting only the spelling this engine
+     happens to use passes everywhere and catches nothing. Assert both. */
+  eq("MX: India writes 12h under the canonical spelling too",
+     zoneIs12("Asia/Kolkata"),true);
+  eq("MX: every alias pair answers the same either way",
+     Object.keys(TZALIAS).filter(a=>zoneIs12(a)!==zoneIs12(TZALIAS[a])).length,0);
+  eq("TZALIAS pairs are one zone, wherever the engine knows both spellings",
+     Object.keys(TZALIAS).filter(a=>{
+       const b=TZALIAS[a], ts=[1970,1996,2006,2024,2035].map(y=>Date.UTC(y,5,15));
+       try{ ts.forEach(t=>{ offsetAt(t,a); offsetAt(t,b); }); }
+       catch(e){ return false; }              // engine knows only one: nothing to check
+       return !ts.every(t=>offsetAt(t,a)===offsetAt(t,b));
+     }).length,0);
+  /* Guards the hand-written region list against CLDR. A full AA-ZZ sweep was
+     run once and found no 12-hour region with zones that the list omits;
+     re-checking the 114 it does list is cheap enough to keep. Engines without
+     getHourCycles report nothing and are skipped rather than failed. */
+  eq("every region listed as 12h really is, per CLDR",(()=>{
+      const bad=[];
+      for(let i=0;i<H12_REGIONS.length;i+=2){
+        const r=H12_REGIONS.slice(i,i+2);
+        try{ const c=new Intl.Locale("und-"+r).getHourCycles();
+             if(c&&c[0]&&c[0].indexOf("h1")!==0) bad.push(r); }catch(e){}
+      }
+      return bad.join(","); })(),"");
+  eq("canonTZ is total (never returns empty)",
+     ZONES.filter(z=>!canonTZ(z[1])).length,0);
   eq("hhmm 24h",hhmm({h:5,mi:42},true),"05:42");
   eq("hhmm 12h",hhmm({h:16,mi:42},false),"4:42p");
   eq("hhmm midnight 12h",hhmm({h:0,mi:5},false),"12:05a");

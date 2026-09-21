@@ -143,7 +143,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 127 assertions covering DST
+`index.html?selftest=1` locally. It runs 132 assertions covering DST
 transitions, offset arithmetic, ISO weeks, the zone catalogue, the link codec
 and the clock-format logic, and prints a pass/fail table. Golden values were
 cross-checked against an independent implementation.
