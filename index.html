@@ -1,0 +1,1559 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>World Time Tool</title>
+<meta name="description" content="Compare local time across time zones on an hour grid. One HTML file, no dependencies, DST handled from the browser's own time-zone data.">
+<meta name="theme-color" content="#f1f4f7">
+<meta property="og:title" content="World Time Tool">
+<meta property="og:description" content="Compare local time across time zones on an hour grid. One HTML file, no dependencies.">
+<meta property="og:type" content="website">
+<!-- inline favicon: keeps the page a single file with no extra request -->
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%232f6fd0' stroke-width='2.4' stroke-linecap='round'><circle cx='12' cy='12' r='9'/><path d='M12 7v5l3.2 1.9'/></svg>">
+<style>
+:root{
+  --bg:#f1f4f7; --panel:#fff; --line:#e3e8ee; --rule:#eef2f6;
+  --text:#1f2933; --muted:#8a94a0; --accent:#2f6fd0; --accent-soft:#eaf1fc;
+  --edge:#2f6fd0; --now:#e2483a; --today:#e2483a; --biz:#2fa36b;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+/* kill the grey tap flash and the legacy double-tap-zoom delay; taps get
+   their own :active feedback below so nothing feels dead */
+button,.c,.day,.zname,.lk{-webkit-tap-highlight-color:transparent;
+  touch-action:manipulation}
+.c:active{filter:brightness(.94)}
+button.ui:active,.todaybtn:active,.seg button:active,.day:active{filter:brightness(.94)}
+body{
+  font-family:Arial,Helvetica,sans-serif;
+  background:var(--bg); color:var(--text); font-size:13px; padding:16px;
+  -webkit-font-smoothing:antialiased;
+}
+#app{max-width:1840px;margin:0 auto;background:var(--panel);
+  border:1px solid var(--line);border-radius:10px;
+  box-shadow:0 1px 3px rgba(16,32,55,.06),0 8px 24px rgba(16,32,55,.05)}
+/* only the rows scroll sideways, so the header dropdown is never clipped.
+   position:relative anchors the pinned-column overlay, which scrolls with
+   the content because it lives inside the scroll container. */
+.gwrap{overflow-x:auto;overflow-y:visible;position:relative;
+  -webkit-overflow-scrolling:touch;
+  /* a horizontal flick that reaches the end must not hand the gesture to the
+     browser's back-navigation */
+  overscroll-behavior-x:contain}
+
+/* ---------- header ---------- */
+.hrow1,.hrow2{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding:10px 16px}
+.hrow1{border-bottom:1px solid var(--rule)}
+.hrow2{border-bottom:1px solid var(--line);background:#fafbfd;
+  border-radius:0}
+/* tiny three-line lockup: reads as a mark, costs almost no header width */
+.brand{display:flex;align-items:center;gap:7px;font-weight:bold;
+  color:var(--accent);white-space:nowrap}
+.brand svg{flex:0 0 auto}
+.brandtext{font-size:9.5px;line-height:1.12;letter-spacing:.4px}
+.spacer{flex:1}
+
+/* live clock for the home zone. tabular-nums keeps the seconds from
+   jittering the layout as they tick. */
+.nowclock{display:flex;flex-direction:column;justify-content:center;
+  line-height:1.15;padding-left:12px;border-left:1px solid var(--rule);
+  white-space:nowrap}
+.nc-t{font-size:17px;font-weight:bold;letter-spacing:-.4px;
+  font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+.nc-t i{font-style:normal;font-size:.66em;opacity:.5;letter-spacing:0}
+.nc-m{font-size:10.5px;color:var(--muted);margin-top:1px}
+.nc-m b{color:var(--accent);font-weight:bold}
+/* button labels degrade full text -> short text -> icon as the bar tightens */
+.t-min,.t-icon{display:none}
+
+/* pill buttons */
+button.ui{font-family:inherit;font-size:12px;padding:7px 13px;background:#fff;
+  border:1px solid var(--line);border-radius:7px;cursor:pointer;color:#55606d;
+  white-space:nowrap;font-weight:bold}
+button.ui:hover{background:#f4f7fb;border-color:#cfd8e3}
+button.ui.on{background:var(--accent);border-color:var(--accent);color:#fff}
+/* 12 / 24 / MX segmented control */
+.seg{display:flex;border:1px solid var(--line);border-radius:7px;overflow:hidden;
+  background:#fff}
+.seg button{font-family:inherit;font-size:12px;font-weight:bold;cursor:pointer;
+  border:none;border-left:1px solid var(--line);background:#fff;color:#7b8794;
+  padding:0 11px;min-width:40px;height:32px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;line-height:1.02}
+.seg button:first-child{border-left:none}
+.seg button i{font-style:normal;font-size:9.5px}
+.seg button:hover{background:#f4f7fb;color:var(--text)}
+.seg button.on{background:var(--accent);color:#fff}
+.todaybtn{display:flex;align-items:center;gap:6px;font-family:inherit;font-size:12px;
+  font-weight:bold;padding:7px 14px;border-radius:7px;cursor:pointer;white-space:nowrap;
+  background:#fdeceb;border:1px solid #f6cdc9;color:var(--today)}
+.todaybtn:hover{background:#fbdedb}
+.todaybtn i{width:6px;height:6px;border-radius:50%;background:var(--today)}
+
+.days{display:flex;flex-wrap:wrap;gap:2px}
+.day{display:flex;align-items:center;gap:5px;padding:6px 12px;border-radius:7px;
+  cursor:pointer;font-size:12px;color:#66717e;white-space:nowrap;
+  border:1px solid transparent}
+.day:hover{background:#eef3f9}
+.day.sel{background:#fff;border-color:#cfdcf0;color:var(--accent);font-weight:bold;
+  box-shadow:0 1px 2px rgba(16,32,55,.06)}
+/* the dot marks TODAY, not the selection -- the box already shows which tab
+   is active, so the dot is free to carry information the box cannot */
+.day i{width:5px;height:5px;border-radius:50%;background:var(--today);flex:0 0 auto}
+.day.we{color:#d2604f}
+.dpick{font-family:inherit;font-size:12px;padding:6px 8px;border:1px solid var(--line);
+  border-radius:7px;color:#55606d;background:#fff}
+.daynav{display:none}
+/* ISO week of the displayed date, next to the date control it describes */
+.wknum{font-size:11px;font-weight:bold;color:#5b6875;background:#eef2f7;
+  border-radius:6px;padding:6px 8px;white-space:nowrap;letter-spacing:.3px}
+
+/* ---------- search ---------- */
+.search{position:relative;flex:1;max-width:520px;min-width:200px}
+.search input{font-family:inherit;font-size:13px;padding:9px 12px 9px 32px;width:100%;
+  border:1px solid var(--line);border-radius:8px;outline:none;background:#fafbfd}
+.search input:focus{border-color:var(--accent);background:#fff;
+  box-shadow:0 0 0 3px var(--accent-soft)}
+.search svg{position:absolute;left:10px;top:50%;transform:translateY(-50%);
+  pointer-events:none;opacity:.45}
+.drop{position:absolute;top:42px;left:0;right:0;max-height:330px;overflow:auto;
+  background:#fff;border:1px solid var(--line);border-radius:8px;z-index:50;
+  box-shadow:0 10px 30px rgba(16,32,55,.16);display:none;padding:4px}
+.drop.open{display:block}
+.drop div{padding:7px 10px;cursor:pointer;font-size:12.5px;border-radius:5px}
+.drop div:hover,.drop div.hi{background:var(--accent-soft)}
+.drop .off{display:inline-block;min-width:78px;color:var(--muted);font-size:11px}
+
+/* ---------- rows ---------- */
+/* min-width:max-content is load-bearing: without it the row box is only as
+   wide as the viewport while the cells overflow it, and a sticky child is
+   clamped to its containing block -- so the zone label would slide out of
+   view once you scrolled past (row width - label width). */
+.row{display:flex;border-bottom:1px solid var(--rule);min-height:58px;
+  min-width:max-content}
+.row:last-child{border-bottom:none}
+.row.home{background:#f8fbff}
+/* sticky so the zone stays readable while the hour grid scrolls sideways */
+/* z-index must clear every mark inside the grid (day pills 3, NOW pill 4),
+   or those slide out from under the sticky label when the grid is scrolled */
+.lab{width:322px;flex:0 0 322px;display:flex;align-items:center;gap:7px;
+  padding:7px 12px;border-right:1px solid var(--line);
+  position:sticky;left:0;z-index:7;background:#fff}
+.row.home .lab{background:#f8fbff}
+/* only when the grid actually scrolls: tells the eye that cells pass UNDER
+   the frozen column, rather than being cut off by it */
+.gwrap.scrolls .lab{box-shadow:4px 0 7px -3px rgba(16,32,55,.16)}
+
+/* column-header ruler */
+.row.hdr{min-height:0;background:#fafbfd;border-bottom:1px solid var(--line)}
+.row.hdr .lab{background:#fafbfd;font-size:11px;font-weight:bold;
+  color:var(--muted);text-transform:uppercase;letter-spacing:.4px;padding:7px 12px}
+/* extra top padding reserves a band for the NOW pill, which is absolutely
+   positioned at the top of this cell and would otherwise sit on the label */
+.hc{display:flex;align-items:flex-end;justify-content:center;font-size:11px;
+  color:#8b96a3;padding:15px 0 5px;position:relative;
+  border-right:1px solid var(--rule)}
+.hc:last-child{border-right:none}
+.hc.iscur{color:var(--accent);font-weight:bold}
+
+.star{font-family:inherit;flex:0 0 auto;border:none;background:none;cursor:pointer;
+  font-size:14px;line-height:1;color:#cfd6df;padding:2px}
+.star:hover{color:#f0b429}
+.star.on{color:#f0b429}
+.badge{flex:0 0 auto;min-width:34px;text-align:center;font-size:11px;font-weight:bold;
+  color:#5b6875;background:#eef2f7;border-radius:5px;padding:3px 5px}
+.row.home .badge{background:var(--accent-soft);color:var(--accent)}
+.lmain{flex:1;min-width:0;display:flex;align-items:center;gap:8px}
+.tblock{flex:0 0 auto}
+.znames{flex:1;min-width:0}
+.zname{font-weight:bold;font-size:14px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;cursor:pointer;line-height:1.25}
+.zname:hover{color:var(--accent)}
+.abbr{display:inline-block;font-size:9.5px;font-weight:bold;vertical-align:1px;
+  background:#eef2f7;color:#6b7784;border-radius:4px;padding:1px 4px;margin-left:5px;
+  letter-spacing:.2px}
+.zsub{color:var(--muted);font-size:11px;white-space:nowrap;overflow:hidden;
+  text-overflow:ellipsis;margin-top:1px}
+.ztime{text-align:right;font-size:16px;font-weight:bold;white-space:nowrap;
+  letter-spacing:-.3px}
+.zdate{text-align:right;color:var(--muted);font-size:10.5px;white-space:nowrap;margin-top:1px}
+.acts{display:flex;flex-direction:column;gap:2px}
+.acts button{font-family:inherit;width:17px;height:15px;line-height:1;font-size:9px;
+  border:1px solid var(--line);background:#fff;border-radius:4px;cursor:pointer;
+  color:var(--muted);padding:0}
+.acts button:hover{background:#eef3f9;color:var(--text)}
+
+/* ---------- cells ---------- */
+/* no min-width:0 -- the grid's min-content (N x track min) must be honoured
+   so narrow windows scroll instead of squashing the hour tiles */
+.cells{flex:1;display:grid}
+.c{border-right:1px solid rgba(255,255,255,.6);display:flex;flex-direction:column;
+  align-items:center;justify-content:center;padding:6px 0;cursor:pointer;
+  position:relative;user-select:none;min-width:0}
+.c:last-child{border-right:none}
+.c .num{font-size:14px;line-height:1.05}
+.c .num.sm{font-size:11.5px}
+.c .sub{font-size:8.5px;color:rgba(0,0,0,.40);line-height:1.3;text-transform:uppercase}
+/* cell background is a continuous hour ramp set inline -- see hourColor() */
+/* weekends get diagonal hatching: a flat tint reads as "slightly different
+   shade", hatching reads unmistakably as "not a working day" */
+.c.we::before{content:"";position:absolute;inset:0;pointer-events:none;
+  background:
+    repeating-linear-gradient(45deg,rgba(84,100,122,.16) 0 1.5px,
+                                    rgba(0,0,0,0) 1.5px 5px),
+    rgba(118,130,143,.07)}
+
+/* date rollover: a boundary rule plus a floating pill, so the cell still
+   shows its hour instead of being replaced by the date tile */
+.dayline{position:absolute;left:0;top:0;bottom:0;width:2px;background:var(--edge);
+  pointer-events:none;z-index:2}
+/* max-width is the hard guarantee: the pill can never spill into the next
+   column however narrow the cells get. The month is only printed when the
+   month actually changes, so the usual form is just the day number. */
+/* No width clamp: the label is allowed to run past its own column, which is
+   fine because a row can only ever cross one midnight, so two pills can never
+   collide. Near the right edge it anchors right instead, so it grows inward
+   rather than off the end of the grid. */
+.daypill{position:absolute;top:2px;left:2px;background:var(--edge);color:#fff;
+  font-size:8px;font-weight:bold;letter-spacing:.2px;padding:1px 3px;border-radius:3px;
+  white-space:nowrap;pointer-events:none;z-index:3}
+.daypill.dp-right{left:auto;right:2px}
+/* Size class comes from the measured cell width (see placeOverlays), not a
+   media query, since the column count moves the width as much as the viewport
+   does. The threshold is the track minimum, so the full form is used at every
+   real width -- raise it here to make the label shrink sooner. */
+.dp-wd,.dp-mo{display:none}
+.gwrap.lbl-full .dp-wd,.gwrap.lbl-full .dp-mo,.daypill.force-mo .dp-mo{display:inline}
+
+/* "now" marker: ONE bar spanning every row, placed proportionally inside the
+   current hour so it drifts across as the hour passes. Drawn as a single
+   overlay because per-cell segments get chopped up by the row rules. */
+.nowbar{position:absolute;width:2px;background:var(--now);pointer-events:none;
+  z-index:3;box-shadow:0 0 0 1px rgba(255,255,255,.5)}
+.nowpill{position:absolute;top:2px;transform:translateX(-50%);background:var(--now);
+  color:#fff;font-size:8px;font-weight:bold;letter-spacing:.5px;padding:1px 5px;
+  border-radius:3px;white-space:nowrap;pointer-events:none;z-index:4}
+/* near either end the pill would overflow the grid, so anchor it instead */
+.nowpill.pr{transform:none;left:auto;right:1px}
+.nowpill.pl{transform:none;left:1px}
+/* left+right edges only -- a full inset ring would box every cell separately
+   and draw horizontal rules across the column. These stack into two
+   continuous vertical rails from the ruler down to the last row. */
+/* hover: cells carry only the tint; the outline is one continuous overlay */
+.c.hov,.hc.hov{box-shadow:inset 0 0 0 99px rgba(47,111,208,.06)}
+.hoverbox{position:absolute;border:1.5px solid rgba(47,111,208,.5);
+  border-radius:8px;pointer-events:none;z-index:1}
+/* the pinned column is drawn as ONE rounded box (see placeOverlays),
+   not per-cell edges -- inset shadows cannot round the corners of a shape
+   that spans several elements. Cells only carry a light fill. */
+.c.pin,.hc.pin{box-shadow:inset 0 0 0 99px rgba(31,41,51,.045)}
+.pinbox{position:absolute;border:1.5px solid #7c8b9c;border-radius:8px;
+  pointer-events:none;z-index:2}
+.c.allbiz::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;
+  background:var(--biz)}
+
+/* ---------- footer / pinned bar ---------- */
+footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
+  color:var(--muted);font-size:11px;display:flex;gap:16px;flex-wrap:wrap;
+  align-items:center;border-radius:0 0 10px 10px}
+.lk{color:var(--accent);cursor:pointer}
+.lk:hover{text-decoration:underline}
+.pinbar{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 16px;
+  border-top:1px solid var(--line);background:#f7f9fc;border-radius:0 0 10px 10px}
+.pinbar .plabel{font-size:11px;font-weight:bold;color:var(--muted);
+  text-transform:uppercase;letter-spacing:.4px}
+/* chips carry the same hour ramp as the grid, plus a working-hours rail so
+   a glance says whether that instant is reachable in each zone */
+.pinchip{background:#fff;border:1px solid var(--line);border-radius:7px;
+  padding:5px 10px 5px 9px;font-size:12px;white-space:nowrap;
+  border-left:4px solid var(--line)}
+.pinchip b{color:var(--text)}
+.pinchip span{color:#6b7784;font-size:11px}
+.pinchip.w-biz{border-left-color:var(--biz)}
+.pinchip.w-edge{border-left-color:#e0a340}
+.pinchip.w-off{border-left-color:#93a4b8}
+/* copy-ready prose for the pinned instant */
+.pinsent{flex:1 0 100%;display:flex;align-items:center;gap:10px;margin-top:2px;
+  padding-top:8px;border-top:1px dashed var(--line)}
+.pinsent span{flex:1;min-width:0;font-size:11.5px;color:#4b5763;line-height:1.45;
+  font-style:italic}
+.pinsent button{flex:0 0 auto}
+.webadge{display:inline-block;margin-left:6px;font-size:8.5px;font-weight:bold;
+  letter-spacing:.5px;color:#7a5bb5;border:1px solid #cfc0ea;background:#f4efff;
+  border-radius:4px;padding:1px 4px;vertical-align:1px}
+.pinlegend{display:flex;align-items:center;gap:9px;font-size:10.5px;color:var(--muted)}
+.pinlegend em{font-style:normal;display:flex;align-items:center;gap:4px}
+.pinlegend i{width:8px;height:8px;border-radius:2px;display:inline-block}
+.empty{padding:44px;text-align:center;color:var(--muted)}
+/* sits outside #app so it survives every re-render */
+.credit{max-width:1840px;margin:10px auto 2px;font-size:10.5px;text-align:center;
+  color:#9aa4b0;letter-spacing:.2px}
+.credit a{color:inherit;text-decoration:underline}
+.credit a:hover{color:var(--accent)}
+
+/* ---------- selftest ---------- */
+#st{max-width:900px;margin:0 auto;background:#fff;border:1px solid var(--line);
+  padding:18px;border-radius:10px}
+#st h1{font-size:17px;margin-bottom:12px}
+#st table{border-collapse:collapse;width:100%;font-size:12px}
+#st td,#st th{border:1px solid var(--line);padding:5px 8px;text-align:left}
+#st .p{color:#18794e;font-weight:bold}
+#st .f{color:#c0392b;font-weight:bold}
+#st tr.fail{background:#fdf0ee}
+
+/* ---------- responsive: keep the header at exactly two rows ----------
+   Each step drops decoration, never a control, so hrow1 and hrow2 each stay
+   on a single line well below laptop width. */
+@media (max-width:1080px){
+  .nc-m{display:none}                      /* clock keeps the time, drops the label */
+  .t-full{display:none} .t-min{display:inline}
+  .hrow1,.hrow2{gap:9px}
+}
+@media (max-width:900px){
+  /* trim the date strip from both ends so Today stays centred */
+  .days .day:first-child,.days .day:last-child{display:none}
+}
+@media (max-width:760px){
+  .days .day:nth-child(2),.days .day:nth-child(6){display:none}
+  .search input{padding-left:28px}
+  .search svg{left:8px}
+}
+@media (max-width:620px){
+  .seg button{min-width:34px;padding:0 7px}
+  /* Link / Reset become icons, which buys back enough room to KEEP the
+     clock -- the most glanceable thing in the bar, and previously the first
+     casualty at this width. */
+  .t-min{display:none}
+  .t-icon{display:flex;align-items:center}
+  button.ui{padding:7px 9px}
+  /* the divider rule made the glyph and the time read as two separate items;
+     pair them tightly instead */
+  .nowclock{padding-left:0;border-left:none;margin-left:-2px}
+  .nc-t{font-size:16px}
+  /* Every control carrying its own 1px border turns a narrow bar into a row
+     of competing boxes. Fill instead of outline, and let the segmented
+     control be the only bordered thing. */
+  .search input,button.ui,.dpick{border-color:transparent;background:#edf1f6}
+  .search input:focus{background:#fff;border-color:var(--accent)}
+  button.ui:hover{background:#e0e7f0}
+  .wknum{background:#e6ebf2}
+  /* hatching tuned for 50px cells reads as mud at 30px */
+  .c.we::before{background:
+    repeating-linear-gradient(45deg,rgba(84,100,122,.10) 0 1px,
+                                    rgba(0,0,0,0) 1px 5px),
+    rgba(118,130,143,.05)}
+}
+@media (max-width:530px){
+  /* last resort before wrapping: compact every control rather than drop one.
+     With the wordmark already gone the lone glyph is pure decoration sitting
+     next to a real clock, so it goes too and the time leads the bar. */
+  .brand{display:none}
+  .hrow1,.hrow2{gap:6px;padding:8px 10px}
+  .search{min-width:104px}
+  .search input{font-size:12px;padding:7px 8px 7px 24px}
+  .search svg{left:6px}
+  button.ui{padding:6px 8px;font-size:11px}
+  .seg button{min-width:29px;padding:0 5px;font-size:11px;height:29px}
+  .todaybtn{padding:6px 9px;font-size:11px}
+  .day{padding:5px 7px;font-size:11px}
+  .dpick{font-size:11px;padding:5px 3px}
+}
+@media (max-width:440px){
+  /* phone: the date strip goes, so step days with arrows instead -- losing
+     one-tap day nav to the picker's modal was a real downgrade */
+  .days{display:none}
+  .daynav{display:block;font-size:15px;line-height:1;padding:5px 11px}
+}
+@media (max-width:405px){
+  .hrow1,.hrow2{gap:5px}
+  .search{min-width:64px}
+  button.ui{padding:6px 6px}
+  .seg button{min-width:26px;padding:0 4px}
+}
+
+/* ---------- responsive: shed the label column progressively ---------- */
+@media (max-width:1400px){
+  .lab{width:280px;flex-basis:280px}
+  .iana{display:none}
+}
+@media (max-width:1100px){
+  .lab{width:232px;flex-basis:232px;gap:6px}
+  .zsub{display:none}
+  /* stack name over clock so the name gets the whole label width */
+  .lmain{flex-direction:column;align-items:stretch;gap:0}
+  .ztime,.zdate{text-align:left}
+  .ztime{font-size:13px}
+}
+@media (max-width:820px){
+  body{padding:8px}
+  .lab{width:200px;flex-basis:200px}
+  .zdate{display:none}
+  .acts{flex-direction:row}
+  .brand{font-size:15px}
+  .star{display:none}
+}
+@media (max-width:560px){
+  .lab{width:168px;flex-basis:168px}
+  .badge{min-width:28px;font-size:10px;padding:2px 4px}
+  .zname{font-size:12px}
+  .ztime{font-size:11px}
+  .abbr{display:none}
+  /* iOS zooms the whole page when a focused field is under 16px and never
+     zooms back out, so the search box gets 16px on touch-sized screens */
+  .search input{font-size:16px}
+  .dpick{font-size:13px}
+  /* the row controls were 17x15 -- far under a usable tap target. Reordering
+     is a desktop nicety, so drop it here and give Remove a real target. */
+  .acts button[data-up]{display:none}
+  .acts button{width:30px;height:30px;font-size:14px;border-radius:6px}
+  /* the label was eating 45% of a phone screen; claw width back for the grid,
+     which is the part that actually does the job */
+  :root{--cellmin:30px}
+  .lab{width:144px;flex-basis:144px;padding:7px 8px;gap:5px}
+  .zname{font-size:11.5px}
+  .badge{min-width:24px;padding:2px 3px}
+  /* a boxed button is heavy next to a two-line label; keep the 30px target
+     but let it read as a quiet glyph */
+  .acts button{border-color:transparent;background:none;color:#b3bcc7}
+  .acts button:hover{background:#eef3f9;color:var(--text)}
+  /* the column heading is a desktop affordance and just crowds the label */
+  .row.hdr .lab{font-size:0}
+  /* let the date control fill row two instead of leaving a gap in the middle */
+  .dpick{flex:1;min-width:0}
+  .search input{padding-top:8px;padding-bottom:8px}
+  /* cell type was sized for 50px cells: the hour dominated and the am/pm was
+     a speck. Bring them closer together and quieten the suffix. */
+  .c{padding:5px 0}
+  .c .num{font-size:13px;line-height:1.1}
+  .c .num.sm{font-size:10.5px}
+  .c .sub{font-size:7.5px;color:rgba(0,0,0,.32);line-height:1.25}
+  .hc{font-size:10px;padding:14px 0 4px}
+  /* The badge used to be its own full-height column beside the text, so the
+     label needed room for three clusters side by side. Re-flow it as a small
+     grid -- name across the top, badge tucked beside the time underneath --
+     which buys ~26px back for the grid without shrinking any type. */
+  .lab{display:grid;grid-template-columns:auto 1fr auto;
+       grid-template-areas:"nm nm ac" "bd tm ac";
+       align-items:center;column-gap:4px;row-gap:1px;
+       width:var(--labw,118px);flex-basis:var(--labw,118px);
+       padding:7px 3px 7px 7px}
+  .lmain{display:contents}
+  .znames{grid-area:nm;min-width:0}
+  /* the offset as a chip costs ~8px of padding on the line that actually
+     governs the label width; plain coloured text reads the same and is quieter */
+  .badge{grid-area:bd;font-size:9.5px;padding:0;background:none;
+    color:var(--accent);min-width:0}
+  .row.home .badge{background:none}
+  .tblock{grid-area:tm;min-width:0}
+  .acts{grid-area:ac}
+  .zname{line-height:1.2}
+  .ztime{font-size:11px;color:#5b6875;font-weight:bold}
+  .row{min-height:52px}
+  /* narrower cells too: more hours on screen is the whole point here */
+  :root{--cellmin:28px}
+  /* 26px visual, ~38px touch target: safe to overflow now that Remove is the
+     only button left in the row, so there is nothing adjacent to mis-hit */
+  .acts button{width:24px;height:24px;font-size:13px;position:relative}
+  .acts button::after{content:"";position:absolute;inset:-7px}
+  /* the legend is three lines of prose on a phone */
+  footer span:nth-child(n+2){display:none}
+  /* the pinned bar was eating a third of the screen: drop the colour legend
+     (the chips carry the same signal) and preview the sentence in two lines
+     rather than four -- Copy still takes the whole thing */
+  .pinlegend{display:none}
+  .pinbar{padding:8px 10px;gap:6px}
+  /* give the heading its own line so the chips start fresh on the next one
+     and can use the full width instead of being pushed along by it */
+  .plabel{flex:1 0 100%;margin-bottom:1px}
+  .pinchip{padding:4px 7px 4px 6px;font-size:11.5px}
+  .pinsent{gap:8px;padding-top:6px}
+  .pinsent span{font-size:11px;display:-webkit-box;-webkit-line-clamp:2;
+    -webkit-box-orient:vertical;overflow:hidden}
+}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div class="credit">Made with AI tools &middot; Public domain &mdash;
+  <a href="https://unlicense.org"
+     target="_blank" rel="noopener">Unlicense</a>, no rights reserved</div>
+<script>
+/* ============================================================
+   Zone catalogue: Windows' own curated selector list (140 entries,
+   dumped from Get-TimeZone -ListAvailable) mapped to IANA ids.
+   LABELS ONLY. All DST maths comes from Intl at runtime, so this
+   table never needs regenerating when tz rules change.
+   ============================================================ */
+const ZONES=[["(UTC-12:00) International Date Line West","Etc/GMT+12"],["(UTC-11:00) Coordinated Universal Time-11","Etc/GMT+11"],["(UTC-10:00) Aleutian Islands","America/Adak"],["(UTC-10:00) Hawaii","Pacific/Honolulu"],["(UTC-09:30) Marquesas Islands","Pacific/Marquesas"],["(UTC-09:00) Alaska","America/Anchorage"],["(UTC-09:00) Coordinated Universal Time-09","Etc/GMT+9"],["(UTC-08:00) Baja California","America/Tijuana"],["(UTC-08:00) Coordinated Universal Time-08","Etc/GMT+8"],["(UTC-08:00) Pacific Time (US & Canada)","America/Los_Angeles"],["(UTC-07:00) Arizona","America/Phoenix"],["(UTC-07:00) La Paz, Mazatlan","America/Chihuahua"],["(UTC-07:00) Mountain Time (US & Canada)","America/Denver"],["(UTC-07:00) Yukon","America/Whitehorse"],["(UTC-06:00) Central America","America/Guatemala"],["(UTC-06:00) Central Time (US & Canada)","America/Chicago"],["(UTC-06:00) Easter Island","Pacific/Easter"],["(UTC-06:00) Guadalajara, Mexico City, Monterrey","America/Mexico_City"],["(UTC-06:00) Saskatchewan","America/Regina"],["(UTC-05:00) Bogota, Lima, Quito, Rio Branco","America/Bogota"],["(UTC-05:00) Chetumal","America/Cancun"],["(UTC-05:00) Eastern Time (US & Canada)","America/New_York"],["(UTC-05:00) Haiti","America/Port-au-Prince"],["(UTC-05:00) Havana","America/Havana"],["(UTC-05:00) Indiana (East)","America/Indianapolis"],["(UTC-05:00) Turks and Caicos","America/Grand_Turk"],["(UTC-04:00) Atlantic Time (Canada)","America/Halifax"],["(UTC-04:00) Caracas","America/Caracas"],["(UTC-04:00) Cuiaba","America/Cuiaba"],["(UTC-04:00) Georgetown, La Paz, Manaus, San Juan","America/La_Paz"],["(UTC-04:00) Santiago","America/Santiago"],["(UTC-03:30) Newfoundland","America/St_Johns"],["(UTC-03:00) Araguaina","America/Araguaina"],["(UTC-03:00) Asuncion","America/Asuncion"],["(UTC-03:00) Brasilia","America/Sao_Paulo"],["(UTC-03:00) Cayenne, Fortaleza","America/Cayenne"],["(UTC-03:00) City of Buenos Aires","America/Buenos_Aires"],["(UTC-03:00) Montevideo","America/Montevideo"],["(UTC-03:00) Punta Arenas","America/Punta_Arenas"],["(UTC-03:00) Saint Pierre and Miquelon","America/Miquelon"],["(UTC-03:00) Salvador","America/Bahia"],["(UTC-02:00) Coordinated Universal Time-02","Etc/GMT+2"],["(UTC-02:00) Greenland","America/Godthab"],["(UTC-01:00) Azores","Atlantic/Azores"],["(UTC-01:00) Cabo Verde Is.","Atlantic/Cape_Verde"],["(UTC) Coordinated Universal Time","Etc/UTC"],["(UTC+00:00) Dublin, Edinburgh, Lisbon, London","Europe/London"],["(UTC+00:00) Monrovia, Reykjavik","Atlantic/Reykjavik"],["(UTC+00:00) Sao Tome","Africa/Sao_Tome"],["(UTC+01:00) Casablanca","Africa/Casablanca"],["(UTC+01:00) Amsterdam, Berlin, Bern, Rome, Stockholm, Vienna","Europe/Berlin"],["(UTC+01:00) Belgrade, Bratislava, Budapest, Ljubljana, Prague","Europe/Budapest"],["(UTC+01:00) Brussels, Copenhagen, Madrid, Paris","Europe/Paris"],["(UTC+01:00) Sarajevo, Skopje, Warsaw, Zagreb","Europe/Warsaw"],["(UTC+01:00) West Central Africa","Africa/Lagos"],["(UTC+02:00) Athens, Bucharest","Europe/Bucharest"],["(UTC+02:00) Beirut","Asia/Beirut"],["(UTC+02:00) Cairo","Africa/Cairo"],["(UTC+02:00) Chisinau","Europe/Chisinau"],["(UTC+02:00) Gaza, Hebron","Asia/Hebron"],["(UTC+02:00) Harare, Pretoria","Africa/Johannesburg"],["(UTC+02:00) Helsinki, Kyiv, Riga, Sofia, Tallinn, Vilnius","Europe/Kiev"],["(UTC+02:00) Jerusalem","Asia/Jerusalem"],["(UTC+02:00) Juba","Africa/Juba"],["(UTC+02:00) Kaliningrad","Europe/Kaliningrad"],["(UTC+02:00) Khartoum","Africa/Khartoum"],["(UTC+02:00) Tripoli","Africa/Tripoli"],["(UTC+02:00) Windhoek","Africa/Windhoek"],["(UTC+03:00) Amman","Asia/Amman"],["(UTC+03:00) Baghdad","Asia/Baghdad"],["(UTC+03:00) Damascus","Asia/Damascus"],["(UTC+03:00) Istanbul","Europe/Istanbul"],["(UTC+03:00) Kuwait, Riyadh","Asia/Riyadh"],["(UTC+03:00) Minsk","Europe/Minsk"],["(UTC+03:00) Moscow, St. Petersburg","Europe/Moscow"],["(UTC+03:00) Nairobi","Africa/Nairobi"],["(UTC+03:00) Volgograd","Europe/Volgograd"],["(UTC+03:30) Tehran","Asia/Tehran"],["(UTC+04:00) Abu Dhabi, Muscat","Asia/Dubai"],["(UTC+04:00) Astrakhan, Ulyanovsk","Europe/Astrakhan"],["(UTC+04:00) Baku","Asia/Baku"],["(UTC+04:00) Izhevsk, Samara","Europe/Samara"],["(UTC+04:00) Port Louis","Indian/Mauritius"],["(UTC+04:00) Saratov","Europe/Saratov"],["(UTC+04:00) Tbilisi","Asia/Tbilisi"],["(UTC+04:00) Yerevan","Asia/Yerevan"],["(UTC+04:30) Kabul","Asia/Kabul"],["(UTC+05:00) Ashgabat, Tashkent","Asia/Tashkent"],["(UTC+05:00) Astana","Asia/Qyzylorda"],["(UTC+05:00) Ekaterinburg","Asia/Yekaterinburg"],["(UTC+05:00) Islamabad, Karachi","Asia/Karachi"],["(UTC+05:30) Chennai, Kolkata, Mumbai, New Delhi","Asia/Calcutta"],["(UTC+05:30) Sri Jayawardenepura","Asia/Colombo"],["(UTC+05:45) Kathmandu","Asia/Katmandu"],["(UTC+06:00) Bishkek","Asia/Almaty"],["(UTC+06:00) Dhaka","Asia/Dhaka"],["(UTC+06:00) Omsk","Asia/Omsk"],["(UTC+06:30) Yangon (Rangoon)","Asia/Rangoon"],["(UTC+07:00) Bangkok, Hanoi, Jakarta","Asia/Bangkok"],["(UTC+07:00) Barnaul, Gorno-Altaysk","Asia/Barnaul"],["(UTC+07:00) Hovd","Asia/Hovd"],["(UTC+07:00) Krasnoyarsk","Asia/Krasnoyarsk"],["(UTC+07:00) Novosibirsk","Asia/Novosibirsk"],["(UTC+07:00) Tomsk","Asia/Tomsk"],["(UTC+08:00) Beijing, Chongqing, Hong Kong, Urumqi","Asia/Shanghai"],["(UTC+08:00) Irkutsk","Asia/Irkutsk"],["(UTC+08:00) Kuala Lumpur, Singapore","Asia/Singapore"],["(UTC+08:00) Perth","Australia/Perth"],["(UTC+08:00) Taipei","Asia/Taipei"],["(UTC+08:00) Ulaanbaatar","Asia/Ulaanbaatar"],["(UTC+08:45) Eucla","Australia/Eucla"],["(UTC+09:00) Chita","Asia/Chita"],["(UTC+09:00) Osaka, Sapporo, Tokyo","Asia/Tokyo"],["(UTC+09:00) Pyongyang","Asia/Pyongyang"],["(UTC+09:00) Seoul","Asia/Seoul"],["(UTC+09:00) Yakutsk","Asia/Yakutsk"],["(UTC+09:30) Adelaide","Australia/Adelaide"],["(UTC+09:30) Darwin","Australia/Darwin"],["(UTC+10:00) Brisbane","Australia/Brisbane"],["(UTC+10:00) Canberra, Melbourne, Sydney","Australia/Sydney"],["(UTC+10:00) Guam, Port Moresby","Pacific/Port_Moresby"],["(UTC+10:00) Hobart","Australia/Hobart"],["(UTC+10:00) Vladivostok","Asia/Vladivostok"],["(UTC+10:30) Lord Howe Island","Australia/Lord_Howe"],["(UTC+11:00) Bougainville Island","Pacific/Bougainville"],["(UTC+11:00) Chokurdakh","Asia/Srednekolymsk"],["(UTC+11:00) Magadan","Asia/Magadan"],["(UTC+11:00) Norfolk Island","Pacific/Norfolk"],["(UTC+11:00) Sakhalin","Asia/Sakhalin"],["(UTC+11:00) Solomon Is., New Caledonia","Pacific/Guadalcanal"],["(UTC+12:00) Anadyr, Petropavlovsk-Kamchatsky","Asia/Kamchatka"],["(UTC+12:00) Auckland, Wellington","Pacific/Auckland"],["(UTC+12:00) Coordinated Universal Time+12","Etc/GMT-12"],["(UTC+12:00) Fiji","Pacific/Fiji"],["(UTC+12:45) Chatham Islands","Pacific/Chatham"],["(UTC+13:00) Coordinated Universal Time+13","Etc/GMT-13"],["(UTC+13:00) Nuku'alofa","Pacific/Tongatapu"],["(UTC+13:00) Samoa","Pacific/Apia"],["(UTC+14:00) Kiritimati Island","Pacific/Kiritimati"]];
+
+/* ============================================================
+   TIME CORE
+   Only primitive used: Intl instant -> wall-clock fields.
+   Everything else (local midnight, day length, offsets) is derived.
+   ============================================================ */
+const _fc={};
+function fmtParts(tz){
+  return _fc[tz]||(_fc[tz]=new Intl.DateTimeFormat("en-US",{timeZone:tz,hour12:false,
+    year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",
+    weekday:"short"}));
+}
+const MON=["JAN","FEB","MAR","APR","MAY","JUN","JUL","AUG","SEP","OCT","NOV","DEC"];
+
+// instant -> {y,mo,d,h,mi,wd}
+function wall(instant,tz){
+  const p=fmtParts(tz).formatToParts(new Date(instant)),o={};
+  for(const x of p) o[x.type]=x.value;
+  return {y:+o.year,mo:+o.month,d:+o.day,
+          h:(+o.hour)%24,   // hour12:false emits "24" for midnight in some engines
+          mi:+o.minute, wd:o.weekday};
+}
+// the same wall clock re-expressed as if it were UTC (for differencing)
+function wallAsUTC(instant,tz){
+  const w=wall(instant,tz);
+  return Date.UTC(w.y,w.mo-1,w.d,w.h,w.mi);
+}
+/* UTC offset of a zone at a given instant, in whole minutes.
+   wallAsUTC only has minute resolution, so the raw difference carries the
+   seconds/ms of `instant` as float noise -- floor to the minute and round. */
+function offsetAt(instant,tz){
+  const m=Math.floor(instant/60000)*60000;
+  return Math.round((wallAsUTC(m,tz)-m)/60000);
+}
+
+/* Local wall clock -> UTC instant, using only forward conversions.
+   Needs up to 3 iterations (Lord Howe's 30-minute DST shift leaves a
+   residual after the first correction). Nonexistent wall times make the
+   error oscillate forever, so detect that rather than capping iterations. */
+function zonedToInstant(y,mo,d,h,mi,tz){
+  const target=Date.UTC(y,mo-1,d,h,mi);
+  let guess=target,lastErr=null;
+  for(let i=0;i<4;i++){
+    const err=target-wallAsUTC(guess,tz);
+    if(err===0) return {instant:guess,exact:true,reason:"ok"};
+    /* Oscillating: this wall time falls in a spring-forward gap. The two
+       guesses that ping-pong are `guess` and `guess+err`, bracketing the gap.
+       "Compatible" disambiguation wants the later one -- the first instant
+       after the jump. Taking Math.abs(err) instead only works when the loop
+       happens to stop on the earlier guess (it does for New York, but not
+       for Beirut, whose transition is at 00:00). */
+    if(lastErr!==null&&err===-lastErr)
+      return {instant:guess+Math.max(0,err),exact:false,reason:"nonexistent"};
+    lastErr=err; guess+=err;
+  }
+  return {instant:guess,exact:false,reason:"no-converge"};
+}
+// 23, 24, 25 -- or 24.5 / 23.5 for Lord Howe's half-hour DST
+function hoursInDay(y,mo,d,tz){
+  const a=zonedToInstant(y,mo,d,0,0,tz).instant;
+  const n=new Date(Date.UTC(y,mo-1,d+1));
+  const b=zonedToInstant(n.getUTCFullYear(),n.getUTCMonth()+1,n.getUTCDate(),0,0,tz).instant;
+  return (b-a)/3600000;
+}
+function addDays(dt,n){
+  const x=new Date(Date.UTC(dt.y,dt.mo-1,dt.d+n));
+  return {y:x.getUTCFullYear(),mo:x.getUTCMonth()+1,d:x.getUTCDate()};
+}
+const pad=n=>String(n).padStart(2,"0");
+function offLabel(min){
+  const s=min<0?"-":"+",a=Math.abs(min),h=Math.floor(a/60),m=a%60;
+  return m?s+h+":"+pad(m):s+h;
+}
+/* Label for a zone the Windows catalogue does not name: city (plus region for
+   nested ids like America/Argentina/Catamarca) and its live offset. */
+function synthLabel(tz){
+  const p=tz.split("/");
+  const place=p.slice(1).reverse().join(", ").split("_").join(" ")||tz;
+  const off=offsetAt(Date.now(),tz), a=Math.abs(off);
+  return "(UTC"+(off<0?"-":"+")+pad(Math.floor(a/60))+":"+pad(a%60)+") "+place;
+}
+
+/* ICU still lists the legacy spellings (Asia/Calcutta, not Asia/Kolkata), so
+   the modern name would otherwise be unsearchable. Search-only synonyms. */
+const ALIASES={
+  "Asia/Calcutta":"Kolkata Bengaluru Bangalore India","Asia/Katmandu":"Kathmandu",
+  "Asia/Rangoon":"Yangon","Asia/Saigon":"Ho Chi Minh","Europe/Kiev":"Kyiv",
+  "America/Godthab":"Nuuk","Asia/Ulaanbaatar":"Ulan Bator","Asia/Dacca":"Dhaka",
+  "Africa/Asmera":"Asmara","Atlantic/Faeroe":"Faroe","Asia/Thimbu":"Thimphu",
+  "Pacific/Ponape":"Pohnpei","Pacific/Truk":"Chuuk","America/Buenos_Aires":"Argentina",
+  "Asia/Shanghai":"China Beijing Shenzhen Guangzhou","Asia/Tokyo":"Japan",
+  "America/New_York":"Boston Philadelphia Atlanta Miami","Europe/Berlin":"Germany Munich",
+  "America/Los_Angeles":"San Francisco Seattle Portland San Diego",
+  "Europe/London":"UK Britain England","Asia/Seoul":"Korea","Asia/Kolkata":"India"
+};
+
+/* The Windows list (139, nicely labelled) merged with everything else the
+   engine's ICU knows. Verified: ICU uses the same legacy spellings Windows
+   does and lists no Etc/* zones, so the two sets union cleanly by id --
+   no alias de-duplication needed. Costs nothing to ship and tracks Edge. */
+/* Built lazily: probing 418 zones costs ~120 ms of formatter construction,
+   which is dead weight at startup when only the handful of displayed rows
+   need labels. Paid on first focus of the picker instead, where it is
+   invisible because the user is about to type. */
+let CATALOG=null,ABBRS=false,onAbbrs=null;
+function catalog(){
+  if(CATALOG) return CATALOG;
+  const out=[],seen=new Set(),now=Date.now();
+  const add=(label,id)=>{
+    if(seen.has(id)) return;
+    let off; try{ off=offsetAt(now,id); }catch(e){ return; }
+    seen.add(id);
+    out.push([label,id,(label+" "+id.split("/").join(" ").split("_").join(" ")+
+      " "+(ALIASES[id]||"")).toLowerCase(),off,""]);
+  };
+  for(const z of ZONES) add(z[0],z[1]);
+  let extra=[]; try{ extra=Intl.supportedValuesOf("timeZone"); }catch(e){}
+  for(const id of extra) if(!seen.has(id)) add(synthLabel(id),id);
+  CATALOG=out.sort((a,b)=>a[3]-b[3]||a[0].localeCompare(b[0]));
+  // abbreviations need a second format pass per zone and cost more than the
+  // rest of the build put together, so they land just after the picker opens
+  if(!ABBRS) setTimeout(enrichAbbrs,0);
+  return CATALOG;
+}
+/* Index both halves of the year so "CET" and "CEST" both find Berlin; the
+   current one is chosen by offset rather than a third format call. */
+function enrichAbbrs(){
+  if(ABBRS||!CATALOG) return;
+  const JAN=Date.UTC(2026,0,15),JUL=Date.UTC(2026,6,15);
+  for(const z of CATALOG){
+    const a1=abbrOf(JAN,z[1]),a2=abbrOf(JUL,z[1]);
+    z[4]=a1===a2?a1:(z[3]===offsetAt(JAN,z[1])?a1:a2);
+    z[2]+=" "+(a1===a2?a1:a1+" "+a2).toLowerCase();
+  }
+  ABBRS=true;
+  if(onAbbrs) onAbbrs();
+}
+
+/* Windows list first (it is small and has the good labels); only consult the
+   merged catalogue if something already built it. */
+function zoneOf(iana){
+  const z=ZONES.find(x=>x[1]===iana);
+  return z||(CATALOG?CATALOG.find(x=>x[1]===iana):undefined);
+}
+function metaFor(tz){ return zoneOf(tz)||[synthLabel(tz),tz]; }
+
+/* Row heading: the city carried by the id reads far better than the Windows
+   label ("New York" beats "Eastern Time (US & Canada)"), with the full
+   catalogue label demoted to the subtitle. */
+/* MX (mixed) mode: each row is written the way its own country writes clock
+   time. CLDR knows this per region, and Intl.Locale maps region -> zones, so
+   the whole thing is derived -- no country table shipped. Only the 114 regions
+   that use a 12-hour clock are listed; everything else, including anything
+   unmapped such as Etc/*, falls back to 24-hour. Listing just these makes the
+   lazy build ~45ms rather than ~870ms of probing all letter pairs. */
+const H12_REGIONS="AEAGALARASAUBBBDBHBMBNBOBSBTCACLCOCRCTCUCYDJDMDODZECEGEHERET"+
+"FJFMGDGHGMGRGTGUGYHKHNINIQJMJOJTKHKIKNKPKRKWKYLBLCLRLSLYMHMIMOMPMRMWMXMY"+
+"NANHNINTNZOMPAPCPEPGPHPKPRPSPUPWPYPZQASASBSDSGSLSOSSSVSYSZTCTDTNTOTTTWUM"+
+"USUYVCVEVGVIVUWKWSYDYEZM";
+let H12ZONES=null;
+function zoneIs12(tz){
+  if(!H12ZONES){
+    H12ZONES=new Set();
+    for(let i=0;i<H12_REGIONS.length;i+=2){
+      try{
+        const zs=new Intl.Locale("und-"+H12_REGIONS.slice(i,i+2)).getTimeZones();
+        if(zs) for(const z of zs) H12ZONES.add(z);
+      }catch(e){}
+    }
+  }
+  return H12ZONES.has(tz);
+}
+// S.fmt is "12" | "24" | "mx"
+function uses24(tz){ return S.fmt==="24"||(S.fmt==="mx"&&!zoneIs12(tz)); }
+function hhmm(w,h24){
+  if(h24) return pad(w.h)+":"+pad(w.mi);
+  const h=w.h%12===0?12:w.h%12;
+  return h+":"+pad(w.mi)+(w.h<12?"a":"p");
+}
+function cellInner(w,h24){
+  if(h24) return w.mi===0?'<div class="num">'+pad(w.h)+'</div>'
+                         :'<div class="num sm">'+pad(w.h)+":"+pad(w.mi)+'</div>';
+  const hh=w.h%12===0?12:w.h%12;
+  return (w.mi===0?'<div class="num">'+hh+'</div>'
+                  :'<div class="num sm">'+hh+":"+pad(w.mi)+'</div>')+
+         '<div class="sub">'+(w.h<12?"am":"pm")+'</div>';
+}
+
+function cityOf(tz){ const p=tz.split("/"); return (p[p.length-1]||tz).split("_").join(" "); }
+
+/* A plain-English rendering of one instant across every row, for pasting into
+   an email or handing to another tool. Anchored on the home zone; any row
+   landing on a different calendar day says so, and the UTC instant is
+   appended so anything parsing it has something unambiguous. */
+const _lc={};
+function longDate(instant,tz){
+  const f=_lc[tz]||(_lc[tz]=new Intl.DateTimeFormat("en-GB",
+    {timeZone:tz,weekday:"long",day:"numeric",month:"long",year:"numeric"}));
+  return f.format(new Date(instant));
+}
+function shortDate(w){ return w.wd+" "+w.d+" "+titleMon(w.mo); }
+function clockWords(w,h24){
+  if(h24) return pad(w.h)+":"+pad(w.mi);
+  const h=w.h%12===0?12:w.h%12;
+  return h+":"+pad(w.mi)+(w.h<12?" AM":" PM");
+}
+function pinSentence(t){
+  const hw=wall(t,S.home);
+  const head=longDate(t,S.home)+" at "+clockWords(hw,uses24(S.home))+
+    " in "+cityOf(S.home)+" ("+abbrOf(t,S.home)+")";
+  const others=S.rows.filter(z=>z!==S.home).map(tz=>{
+    const w=wall(t,tz);
+    const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
+    return clockWords(w,uses24(tz))+" in "+cityOf(tz)+" ("+abbrOf(t,tz)+")"+
+      (sameDay?"":" on "+shortDate(w));
+  });
+  let s=head;
+  if(others.length===1) s+=" is "+others[0];
+  else if(others.length>1)
+    s+=" is "+others.slice(0,-1).join(", ")+" and "+others[others.length-1];
+  return s+". ["+new Date(t).toISOString().replace(".000","")+"]";
+}
+/* ISO-8601 week: weeks start Monday and week 1 is the one holding the year's
+   first Thursday. The ISO year can differ from the calendar year at the
+   boundary -- 2027-01-01 belongs to week 53 of 2026 -- so both are returned. */
+function isoWeek(y,mo,d){
+  const t=new Date(Date.UTC(y,mo-1,d));
+  t.setUTCDate(t.getUTCDate()-((t.getUTCDay()+6)%7)+3);   // Thursday of this week
+  const thu=t.getTime(), isoY=t.getUTCFullYear();
+  const j=new Date(Date.UTC(isoY,0,4));                   // Jan 4 is always in week 1
+  j.setUTCDate(j.getUTCDate()-((j.getUTCDay()+6)%7)+3);   // Thursday of week 1
+  return {w:1+Math.round((thu-j.getTime())/604800000),y:isoY};
+}
+
+// top-bar clock, ticking every second against the home zone
+/* Seconds at full size cost ~45px, which a phone header cannot spare. Set
+   smaller and dimmer they cost ~18px, so they survive at every width and
+   read as a subordinate part of the time rather than shouting. */
+function nowClockHTML(){
+  const w=wall(Date.now(),S.home);
+  const sec='<i>:'+pad(new Date().getSeconds())+'</i>';
+  if(uses24(S.home)) return pad(w.h)+":"+pad(w.mi)+sec;
+  const h=w.h%12===0?12:w.h%12;
+  return h+":"+pad(w.mi)+sec+(w.h<12?" am":" pm");
+}
+function subOf(tz){ const m=zoneOf(tz); return m?shortName(m[0]):tz; }
+/* ICU only knows 14 real short abbreviations in en-US (EDT, PST, AKST, GMT...)
+   and answers "GMT+8" for everything else. Its 166 *long* names are a far
+   better source: initials give CEST, AEDT, JST, SAST correctly. But initials
+   also mint wrong ones -- "Central European Standard Time" and "...Summer
+   Time" both yield CEST, which would label Berlin CEST in winter -- so the
+   conventional abbreviation is pinned here wherever initials get it wrong. */
+const TZABBR={
+"Central European Standard Time":"CET","Eastern European Standard Time":"EET",
+"Western European Standard Time":"WET","Coordinated Universal Time":"UTC",
+"Hong Kong Standard Time":"HKT","Singapore Standard Time":"SGT","Indochina Time":"ICT",
+"Pakistan Standard Time":"PKT","Philippine Standard Time":"PHT","Malaysia Time":"MYT",
+"Myanmar Time":"MMT","Maldives Time":"MVT","Brunei Time":"BNT","Bhutan Time":"BTT",
+"Nepal Time":"NPT","Afghanistan Time":"AFT","Iran Standard Time":"IRST",
+"Türkiye Standard Time":"TRT","Uzbekistan Standard Time":"UZT","Tajikistan Time":"TJT",
+"Turkmenistan Standard Time":"TMT","Kyrgyzstan Time":"KGT","Timor-Leste Time":"TLT",
+"Western Indonesia Time":"WIB","Central Indonesia Time":"WITA","Eastern Indonesia Time":"WIT",
+"Moscow Standard Time":"MSK","Samara Standard Time":"SAMT","Yekaterinburg Standard Time":"YEKT",
+"Omsk Standard Time":"OMST","Krasnoyarsk Standard Time":"KRAT","Irkutsk Standard Time":"IRKT",
+"Yakutsk Standard Time":"YAKT","Vladivostok Standard Time":"VLAT","Magadan Standard Time":"MAGT",
+"Kamchatka Standard Time":"PETT","Ulaanbaatar Standard Time":"ULAT","Khovd Standard Time":"HOVT",
+"Georgia Standard Time":"GET","Armenia Standard Time":"AMT","Azerbaijan Standard Time":"AZT",
+"Brasilia Standard Time":"BRT","Amazon Standard Time":"AMT","Acre Standard Time":"ACT",
+"Argentina Standard Time":"ART","Chile Standard Time":"CLT","Chile Summer Time":"CLST",
+"Colombia Standard Time":"COT","Peru Standard Time":"PET","Ecuador Time":"ECT",
+"Venezuela Time":"VET","Bolivia Time":"BOT","Paraguay Standard Time":"PYT",
+"Uruguay Standard Time":"UYT","Guyana Time":"GYT","Suriname Time":"SRT",
+"Galapagos Time":"GALT","Fernando de Noronha Standard Time":"FNT",
+"Falkland Islands Standard Time":"FKST","Easter Island Standard Time":"EAST",
+"Easter Island Summer Time":"EASST","Azores Standard Time":"AZOT","Azores Summer Time":"AZOST",
+"Cape Verde Standard Time":"CVT","Greenland Standard Time":"WGT","Greenland Summer Time":"WGST",
+"St. Pierre & Miquelon Standard Time":"PMST","St. Pierre & Miquelon Daylight Time":"PMDT",
+"Mauritius Standard Time":"MUT","Seychelles Time":"SCT","Réunion Time":"RET",
+"Chatham Standard Time":"CHAST","Chatham Daylight Time":"CHADT",
+"Norfolk Island Standard Time":"NFT","Norfolk Island Daylight Time":"NFDT",
+"Cook Islands Standard Time":"CKT","Fiji Standard Time":"FJT",
+"New Caledonia Standard Time":"NCT","Solomon Islands Time":"SBT",
+"Papua New Guinea Time":"PGT","Marshall Islands Time":"MHT","Vanuatu Standard Time":"VUT",
+"Tonga Standard Time":"TOT","American Samoa Standard Time":"SST","Nauru Time":"NRT",
+"Niue Time":"NUT","Tuvalu Time":"TVT","Tokelau Time":"TKT","Tahiti Time":"TAHT",
+"Gambier Time":"GAMT","Marquesas Time":"MART","Palau Time":"PWT","Pohnpei Time":"PONT",
+"Chuuk Time":"CHUT","Kosrae Time":"KOST","Gilbert Islands Time":"GILT",
+"Phoenix Islands Time":"PHOT","Line Islands Time":"LINT","Wake Island Time":"WAKT",
+"Christmas Island Time":"CXT","Cocos Islands Time":"CCT","Chamorro Standard Time":"ChST",
+"French Southern & Antarctic Time":"TFT","Davis Time":"DAVT","Mawson Time":"MAWT",
+"Rothera Time":"ROTT","Syowa Time":"SYOT","Vostok Time":"VOST","Dumont d’Urville Time":"DDUT",
+// initials would collide with Atlantic (AST/ADT)
+"Alaska Standard Time":"AKST","Alaska Daylight Time":"AKDT"
+};
+const _ac={},_al={};
+function icuName(instant,tz,style,cache){
+  try{
+    const f=cache[tz]||(cache[tz]=new Intl.DateTimeFormat("en-US",
+      {timeZone:tz,timeZoneName:style}));
+    const p=f.formatToParts(new Date(instant));
+    return (p.find(x=>x.type==="timeZoneName")||{}).value||"";
+  }catch(e){ return ""; }
+}
+/* The long name is consulted first: it covers ~97% of zones, so asking for
+   the short form up front would double the formatter work for nothing.
+   (Initials already yield EDT/PST/HST correctly; Alaska is pinned above.) */
+function abbrOf(instant,tz){
+  const L=icuName(instant,tz,"long",_al);
+  if(TZABBR[L]) return TZABBR[L];                      // pinned convention
+  if(L&&L.indexOf("GMT")!==0){
+    const ini=L.split(/\s+/).filter(w=>/^[A-Z]/.test(w)).map(w=>w[0]).join("");
+    if(ini.length>=3) return ini;                      // CEST, AEDT, JST, EDT
+  }
+  return icuName(instant,tz,"short",_ac);              // GMT+8 / GMT+5:45
+}
+function shortName(label){ const i=label.indexOf(") "); return i<0?label:label.slice(i+2); }
+function utcPart(label){ const i=label.indexOf(")"); return i<0?"":label.slice(0,i+1); }
+function titleMon(m){ return MON[m-1].charAt(0)+MON[m-1].slice(1).toLowerCase(); }
+
+/* ============================================================
+   SELF TEST  (index.html?selftest=1)
+   Golden values independently verified against IANA tzdb.
+   ============================================================ */
+function selftest(){
+  const T=[];
+  const eq=(name,got,want)=>T.push([name,got,want,String(got)===String(want)]);
+  eq("hoursInDay NY 2026-03-08 (spring fwd)",hoursInDay(2026,3,8,"America/New_York"),23);
+  eq("hoursInDay NY 2026-11-01 (fall back)",hoursInDay(2026,11,1,"America/New_York"),25);
+  eq("hoursInDay NY 2026-09-17 (normal)",hoursInDay(2026,9,17,"America/New_York"),24);
+  eq("hoursInDay LordHowe 2026-04-05",hoursInDay(2026,4,5,"Australia/Lord_Howe"),24.5);
+  eq("hoursInDay LordHowe 2026-10-04",hoursInDay(2026,10,4,"Australia/Lord_Howe"),23.5);
+  eq("hoursInDay Chatham 2026-09-27",hoursInDay(2026,9,27,"Pacific/Chatham"),23);
+  const skip=zonedToInstant(2026,3,8,2,30,"America/New_York");
+  eq("NY 2026-03-08 02:30 is nonexistent",skip.reason,"nonexistent");
+  const amb=zonedToInstant(2026,11,1,1,30,"America/New_York");
+  eq("NY 2026-11-01 01:30 resolves to earlier (-04:00)",
+     new Date(amb.instant).toISOString(),"2026-11-01T05:30:00.000Z");
+  eq("Kathmandu minutes are :45",wall(Date.UTC(2026,8,17,12,0),"Asia/Katmandu").mi,45);
+  eq("Kiritimati offset is +14:00",offsetAt(Date.UTC(2026,8,17,12,0),"Pacific/Kiritimati"),840);
+  eq("LordHowe DST delta is 30 min",
+     offsetAt(Date.UTC(2026,0,15),"Australia/Lord_Howe")-offsetAt(Date.UTC(2026,6,15),"Australia/Lord_Howe"),30);
+  eq("midnight anchor NY 2026-11-01",
+     new Date(zonedToInstant(2026,11,1,0,0,"America/New_York").instant).toISOString(),
+     "2026-11-01T04:00:00.000Z");
+  /* Zones that shift DST exactly at 00:00, so local midnight itself vanishes
+     or repeats. The grid is anchored to local midnight, so these decide the
+     column count. Beirut caught an overshoot in the gap fallback. */
+  eq("Beirut 2026-03-29 midnight gap -> 23h",hoursInDay(2026,3,29,"Asia/Beirut"),23);
+  eq("Beirut anchor snaps to 01:00",
+     wall(zonedToInstant(2026,3,29,0,0,"Asia/Beirut").instant,"Asia/Beirut").h,1);
+  eq("Havana 2026-03-08 midnight gap -> 23h",hoursInDay(2026,3,8,"America/Havana"),23);
+  eq("Havana 2026-11-01 midnight repeats -> 25h",hoursInDay(2026,11,1,"America/Havana"),25);
+  eq("Santiago 2026-09-06 midnight gap -> 23h",hoursInDay(2026,9,6,"America/Santiago"),23);
+  eq("NY 02:30 gap still lands on 03:30",
+     wall(zonedToInstant(2026,3,8,2,30,"America/New_York").instant,"America/New_York").h,3);
+
+  // a date the zone skipped entirely when it crossed the date line
+  eq("Samoa 2011-12-30 never existed -> 0h",hoursInDay(2011,12,30,"Pacific/Apia"),0);
+  eq("validDate rejects 2026-99-99",validDate(2026,99,99),false);
+  eq("validDate rejects Feb 30",validDate(2027,2,30),false);
+  eq("validDate accepts leap Feb 29",validDate(2028,2,29),true);
+
+  // regression: offsets must be whole minutes even when the instant carries ms
+  const dirty=Date.UTC(2026,8,17,12,34)+45678;
+  eq("offsetAt whole-minute on a ms-dirty instant",offsetAt(dirty,"Asia/Calcutta"),330);
+  eq("Berlin minus New York = 360 min",
+     offsetAt(dirty,"Europe/Berlin")-offsetAt(dirty,"America/New_York"),360);
+  eq("Shanghai minus New York = 720 min",
+     offsetAt(dirty,"Asia/Shanghai")-offsetAt(dirty,"America/New_York"),720);
+  eq("default rows resolve",DEFAULT_ROWS.filter(z=>!!zoneOf(z)).length,3);
+  eq("Windows base catalogue",ZONES.length,139);
+  /* abbreviations: ICU short where real, else the pinned convention, else
+     initials of the long name. The standard/summer pairs are the trap --
+     naive initials give CEST for both halves of the European year. */
+  const JAN=Date.UTC(2026,0,15),JUL=Date.UTC(2026,6,15);
+  const ab=(tz,d)=>abbrOf(d,tz);
+  eq("Berlin winter is CET not CEST",ab("Europe/Berlin",JAN),"CET");
+  eq("Berlin summer is CEST",ab("Europe/Berlin",JUL),"CEST");
+  eq("Kyiv winter is EET",ab("Europe/Kiev",JAN),"EET");
+  eq("London summer is BST",ab("Europe/London",JUL),"BST");
+  eq("Tokyo is JST",ab("Asia/Tokyo",JUL),"JST");
+  eq("Kolkata is IST",ab("Asia/Calcutta",JUL),"IST");
+  eq("Bangkok is ICT",ab("Asia/Bangkok",JUL),"ICT");
+  eq("Moscow is MSK not MST",ab("Europe/Moscow",JUL),"MSK");
+  eq("Sao Paulo is BRT not BST",ab("America/Sao_Paulo",JUL),"BRT");
+  eq("Sydney summer is AEDT",ab("Australia/Sydney",JAN),"AEDT");
+  eq("Chatham is CHAST",ab("Pacific/Chatham",JUL),"CHAST");
+  eq("Anchorage is AKST",ab("America/Anchorage",JAN),"AKST");
+  eq("UTC is UTC not CUT",ab("Etc/UTC",JUL),"UTC");
+  eq("New York summer is EDT",ab("America/New_York",JUL),"EDT");
+  /* the relative offset badge must be read at the DISPLAYED date: Sydney is
+     +14 from New York in September but +16 in January */
+  const rel=(a,b,d)=>offsetAt(d,a)-offsetAt(d,b);
+  eq("Sydney vs New York in January = +16h",
+     rel("Australia/Sydney","America/New_York",Date.UTC(2026,0,15))/60,16);
+  eq("Sydney vs New York in July = +14h",
+     rel("Australia/Sydney","America/New_York",Date.UTC(2026,6,15))/60,14);
+  eq("Berlin vs New York is +6h in both halves",
+     [Date.UTC(2026,0,15),Date.UTC(2026,6,15)]
+       .map(d=>rel("Europe/Berlin","America/New_York",d)/60).join(),"6,6");
+
+  /* MX mode: clock convention per country, derived from CLDR. Anything not
+     in a 12-hour region -- including unmapped zones like Etc/* -- is 24h. */
+  eq("MX: lazy (zone set not built yet)",H12ZONES===null,true);
+  eq("MX: Switzerland writes 24h",zoneIs12("Europe/Zurich"),false);
+  eq("MX: United States writes 12h",zoneIs12("America/New_York"),true);
+  eq("MX: Germany writes 24h",zoneIs12("Europe/Berlin"),false);
+  eq("MX: Egypt writes 12h",zoneIs12("Africa/Cairo"),true);
+  eq("MX: Japan writes 24h",zoneIs12("Asia/Tokyo"),false);
+  eq("MX: India writes 12h",zoneIs12("Asia/Calcutta"),true);
+  eq("MX: Brazil writes 24h",zoneIs12("America/Sao_Paulo"),false);
+  eq("MX: unmapped Etc/UTC falls back to 24h",zoneIs12("Etc/UTC"),false);
+  eq("hhmm 24h",hhmm({h:5,mi:42},true),"05:42");
+  eq("hhmm 12h",hhmm({h:16,mi:42},false),"4:42p");
+  eq("hhmm midnight 12h",hhmm({h:0,mi:5},false),"12:05a");
+
+  /* ISO weeks. The traps are the year boundaries: a January date can belong
+     to the last week of the previous ISO year and vice versa. */
+  const wk=(y,m,d)=>{const r=isoWeek(y,m,d);return r.y+"-W"+r.w};
+  eq("ISO week 2026-09-18",wk(2026,9,18),"2026-W38");
+  eq("ISO week 2026-01-01 (Thu, so week 1)",wk(2026,1,1),"2026-W1");
+  eq("ISO week 2025-12-29 (Mon) belongs to 2026",wk(2025,12,29),"2026-W1");
+  eq("ISO week 2026-12-31 (Thu) is week 53",wk(2026,12,31),"2026-W53");
+  eq("ISO week 2027-01-01 (Fri) still 2026",wk(2027,1,1),"2026-W53");
+  eq("ISO week 2027-01-04 (Mon) starts 2027",wk(2027,1,4),"2027-W1");
+  eq("ISO week 2028-02-29 (leap day)",wk(2028,2,29),"2028-W9");
+
+  // merged catalogue: Windows labels + everything else ICU knows
+  eq("catalogue is lazy (not built at startup)",CATALOG===null,true);
+  const C=catalog(); enrichAbbrs();   // the test needs the deferred pass now
+  const hit=q=>C.filter(z=>z[2].indexOf(q)>=0).length;
+  eq("merged catalogue is larger than Windows alone",C.length>ZONES.length,true);
+  eq("every Windows zone survives the merge",
+     ZONES.filter(z=>!zoneOf(z[1])).length,0);
+  eq("no duplicate ids in merged catalogue",
+     C.length-new Set(C.map(z=>z[1])).size,0);
+  eq("merged catalogue sorted by offset",
+     C.every((z,i)=>i===0||C[i-1][3]<=z[3]),true);
+  eq("search finds a zone Windows omits (Abidjan)",hit("abidjan")>0,true);
+  eq("alias search: kolkata",hit("kolkata")>0,true);
+  eq("alias search: kyiv",hit("kyiv")>0,true);
+  eq("alias search: boston",hit("boston")>0,true);
+  eq("abbreviation search: cest",hit("cest")>0,true);
+  eq("abbreviation search: jst",hit("jst")>0,true);
+  eq("abbreviation search: ist",hit("ist")>0,true);
+  eq("both halves indexed: cet and cest find Berlin",
+     C.filter(z=>z[1]==="Europe/Berlin"&&z[2].indexOf("cet")>=0&&
+                 z[2].indexOf("cest")>=0).length,1);
+  eq("synthLabel handles nested ids",
+     synthLabel("America/Argentina/Catamarca").indexOf("Catamarca, Argentina")>0,true);
+  const bad=T.filter(t=>!t[3]).length;
+  document.body.innerHTML='<div id="st"><h1>Self test &mdash; '+
+    (bad?'<span class="f">'+bad+' FAILED</span>':'<span class="p">all '+T.length+' passed</span>')+
+    '</h1><table><tr><th>assertion</th><th>got</th><th>expected</th><th></th></tr>'+
+    T.map(t=>'<tr class="'+(t[3]?'':'fail')+'"><td>'+t[0]+'</td><td>'+t[1]+'</td><td>'+t[2]+
+      '</td><td class="'+(t[3]?'p">PASS':'f">FAIL')+'</td></tr>').join("")+
+    '</table><p style="margin-top:12px;color:#8a9199;font-size:12px">'+
+    'Engine: '+navigator.userAgent+'</p></div>';
+}
+
+/* ============================================================
+   STATE
+   ============================================================ */
+const LS="wtb.state.v1";
+let S=null, pinned=null;
+
+const FALLBACK_HOME="America/New_York";   // US east coast, if detection fails
+const DEFAULT_ROWS=["America/Los_Angeles","Europe/Berlin","Asia/Shanghai"];
+
+/* Machine time zone, straight from the engine. Used even when it is not in the
+   Windows catalogue (aliases like America/Indiana/Indianapolis still format
+   fine) -- we only fall back if the engine gives us nothing usable. */
+function detectHome(){
+  try{
+    const tz=Intl.DateTimeFormat().resolvedOptions().timeZone;
+    if(tz){ wall(Date.now(),tz); return tz; }   // throws if the engine rejects it
+  }catch(e){}
+  return FALLBACK_HOME;
+}
+function todayIn(tz){ const w=wall(Date.now(),tz); return {y:w.y,mo:w.mo,d:w.d}; }
+
+/* A hand-edited hash can carry nonsense. Date.UTC happily rolls 2026-99-99
+   forward to 2034-06-06, so range-check and round-trip (this also rejects
+   Feb 30) rather than trusting it. */
+function validDate(y,mo,d){
+  if(!(y>=1900&&y<=2200&&mo>=1&&mo<=12&&d>=1&&d<=31)) return false;
+  const x=new Date(Date.UTC(y,mo-1,d));
+  return x.getUTCFullYear()===y&&x.getUTCMonth()===mo-1&&x.getUTCDate()===d;
+}
+
+function defaultState(){
+  const home=detectHome();
+  const rows=[home];
+  for(const z of DEFAULT_ROWS) if(!rows.includes(z)) rows.push(z);
+  return {home,rows,date:todayIn(home),fmt:"12"};
+}
+const FMTS={"12":1,"24":1,"mx":1};
+function loadState(){
+  const h=location.hash.slice(1);
+  if(h){
+    try{
+      const q=new URLSearchParams(h);
+      const rows=[...new Set((q.get("z")||"").split(",").filter(Boolean))];
+      if(rows.length){
+        const home=q.get("h")||rows[0];
+        const ds=(q.get("d")||"").split("-");
+        const ok=ds.length===3&&validDate(+ds[0],+ds[1],+ds[2]);
+        const date=ok?{y:+ds[0],mo:+ds[1],d:+ds[2]}:todayIn(home);
+        const t=q.get("t");
+        return {home,rows,date,fmt:FMTS[t]?t:"12"};
+      }
+    }catch(e){}
+  }
+  try{
+    const s=JSON.parse(localStorage.getItem(LS));
+    if(s&&s.rows&&s.rows.length){ s.date=todayIn(s.home); return s; }
+  }catch(e){}
+  return defaultState();
+}
+function saveState(){
+  // keep home consistent with the visible rows after any mutation
+  if(S.rows.length&&!S.rows.includes(S.home)) S.home=S.rows[0];
+  try{ localStorage.setItem(LS,JSON.stringify(S)); }catch(e){}
+  const q=new URLSearchParams();
+  q.set("h",S.home); q.set("z",S.rows.join(","));
+  q.set("d",S.date.y+"-"+pad(S.date.mo)+"-"+pad(S.date.d));
+  if(S.fmt&&S.fmt!=="12") q.set("t",S.fmt);
+  history.replaceState(null,"","#"+q.toString());
+}
+
+/* ============================================================
+   RENDER
+   ============================================================ */
+/* Continuous hour -> colour ramp. Anchor stops are interpolated linearly, so
+   fractional-offset zones (:30, :45) land between them rather than snapping.
+   Deliberately low contrast: night reads as a cool hue shift, not a dark block. */
+const RAMP=[
+  [ 0,189,201,215],[ 4,194,206,219],[ 6,212,223,233],[ 8,237,242,241],
+  [ 9,250,249,231],[12,253,252,226],[17,250,249,231],[18,236,241,241],
+  [20,214,225,235],[22,195,207,220],[24,189,201,215]
+];
+function hourColor(h,mi){
+  const t=h+(mi||0)/60;
+  for(let i=1;i<RAMP.length;i++){
+    const a=RAMP[i-1],b=RAMP[i];
+    if(t<=b[0]){
+      const f=(t-a[0])/(b[0]-a[0]);
+      return "rgb("+Math.round(a[1]+(b[1]-a[1])*f)+","+
+                    Math.round(a[2]+(b[2]-a[2])*f)+","+
+                    Math.round(a[3]+(b[3]-a[3])*f)+")";
+    }
+  }
+  return "rgb(189,201,215)";
+}
+
+function render(){
+  const app=document.getElementById("app");
+  const D=S.date;
+  const NOW0=Date.now();          // needed by the header, before the grid maths
+
+  // --- column axis: anchored to home-local midnight, length derived ---
+  const anchor=zonedToInstant(D.y,D.mo,D.d,0,0,S.home).instant;
+  const len=hoursInDay(D.y,D.mo,D.d,S.home);
+  const N=Math.ceil(len);
+  const instants=[]; for(let i=0;i<N;i++) instants.push(anchor+i*3600000);
+
+  // --- header ---
+  const today=todayIn(S.home);
+  const tabs=[];
+  for(let k=-3;k<=3;k++){
+    const dt=addDays(today,k);
+    const sel=dt.y===D.y&&dt.mo===D.mo&&dt.d===D.d;
+    const wd=wall(zonedToInstant(dt.y,dt.mo,dt.d,12,0,S.home).instant,S.home).wd;
+    const we=wd==="Sat"||wd==="Sun";
+    tabs.push('<div class="day'+(sel?" sel":"")+(we?" we":"")+'" data-d="'+
+      dt.y+"-"+dt.mo+"-"+dt.d+'"'+(k===0?' title="Today"':"")+'>'+
+      titleMon(dt.mo)+" "+dt.d+(k===0?'<i></i>':"")+'</div>');
+  }
+  const CLOCK='<svg width="20" height="20" viewBox="0 0 24 24" fill="none" '+
+    'stroke="currentColor" stroke-width="2.1" stroke-linecap="round">'+
+    '<circle cx="12" cy="12" r="9"></circle><path d="M12 7v5l3.2 1.9"></path></svg>';
+  const MAG='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" '+
+    'stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'+
+    '<circle cx="11" cy="11" r="7"></circle><path d="M20 20l-3.6-3.6"></path></svg>';
+  // phone-sized stand-ins for the Link / Reset labels
+  const I_LINK='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '+
+    'stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'+
+    '<path d="M10.5 13.5a5 5 0 0 0 7 0l2.5-2.5a5 5 0 0 0-7-7L12 5"></path>'+
+    '<path d="M13.5 10.5a5 5 0 0 0-7 0L4 13a5 5 0 0 0 7 7l1-1"></path></svg>';
+  const I_RESET='<svg width="15" height="15" viewBox="0 0 24 24" fill="none" '+
+    'stroke="currentColor" stroke-width="2.2" stroke-linecap="round">'+
+    '<path d="M3.5 12a8.5 8.5 0 1 0 2.8-6.3"></path>'+
+    '<path d="M3.5 4.5V10H9"></path></svg>';
+
+  let html='<div class="hrow1">'+
+      '<div class="brand">'+CLOCK+
+        '<span class="brandtext">world<br>time<br>tool</span></div>'+
+      '<div class="nowclock"><span class="nc-t" id="ncT">'+nowClockHTML()+'</span>'+
+        '<span class="nc-m"><b>'+abbrOf(NOW0,S.home)+'</b> '+cityOf(S.home)+
+        ' &middot; W'+(w=>isoWeek(w.y,w.mo,w.d).w)(wall(NOW0,S.home))+
+        '</span></div>'+
+      '<div class="search">'+MAG+
+        '<input id="q" placeholder="'+(innerWidth>620?"Add a place or Windows time zone..."
+          :"Add a zone")+'" autocomplete="off">'+
+        '<div class="drop" id="drop"></div></div>'+
+      '<div class="seg" title="Clock format. MX writes each row the way its own country does.">'+
+        '<button data-fmt="12"'+(S.fmt==="12"?' class="on"':"")+'><i>am</i><i>pm</i></button>'+
+        '<button data-fmt="24"'+(S.fmt==="24"?' class="on"':"")+'>24</button>'+
+        '<button data-fmt="mx"'+(S.fmt==="mx"?' class="on"':"")+'>MX</button>'+
+      '</div>'+
+      '<button class="ui" id="copy" title="Link to this view">'+
+        '<span class="t-full">Link to this view</span>'+
+        '<span class="t-min">Link</span><span class="t-icon">'+I_LINK+'</span></button>'+
+      /* every tier needs its own span: t-full above 1080, t-min down to 620,
+         t-icon below that. Missing t-full left this button blank on desktop. */
+      '<button class="ui" id="reset" title="Reset">'+
+        '<span class="t-full">Reset</span><span class="t-min">Reset</span>'+
+        '<span class="t-icon">'+I_RESET+'</span></button>'+
+    '</div>'+
+    '<div class="hrow2">'+
+      '<button class="todaybtn" id="todaybtn"><i></i>Today</button>'+
+      '<button class="ui daynav" id="dprev" title="Previous day">&#8249;</button>'+
+      '<button class="ui daynav" id="dnext" title="Next day">&#8250;</button>'+
+      '<div class="days">'+tabs.join("")+'</div>'+
+      '<div class="spacer"></div>'+
+      '<span class="wknum" title="ISO week of the displayed date">W'+
+        isoWeek(D.y,D.mo,D.d).w+'</span>'+
+      '<input type="date" id="dp" class="dpick" title="Jump to any date" value="'+
+        D.y+"-"+pad(D.mo)+"-"+pad(D.d)+'">'+
+    '</div>';
+
+  if(!S.rows.length){ app.innerHTML=html+'<div class="empty">No zones. Add one above.</div>'; wire(); return; }
+
+  /* A zone can skip a calendar date outright when it crosses the date line
+     (Samoa lost 2011-12-30, Kiritimati lost 1994-12-31). hoursInDay is then 0
+     and the grid would render silently empty -- say so instead. */
+  if(N<1){
+    app.innerHTML=html+'<div class="empty">'+titleMon(D.mo)+" "+D.d+", "+D.y+
+      " never happened in "+shortName(metaFor(S.home)[0])+
+      " &mdash; the zone skipped this date when it crossed the date line.</div>";
+    wire(); return;
+  }
+
+  // --- precompute every cell so we can mark all-business columns ---
+  const cellData=S.rows.map(tz=>instants.map(t=>wall(t,tz)));
+  // a shared 9-5 window means nothing if it lands on someone's Saturday
+  const allBiz=instants.map((_,i)=>cellData.every(r=>
+    r[i].h>=9&&r[i].h<=17&&r[i].wd!=="Sat"&&r[i].wd!=="Sun"));
+  // one instant for every row, so clocks cannot disagree with each other
+  const NOW=Date.now();
+  /* The offset badge and abbreviation describe the GRID, so they must be read
+     at the displayed date -- not at now. Sydney is +14 from New York in
+     September but +16 in January; sampling "now" while showing January would
+     print a badge that contradicts the cells right beside it. Mid-window is
+     the representative instant. */
+  const REF=anchor+Math.floor(N/2)*3600000;
+  const homeOff=offsetAt(REF,S.home);
+  // which column holds "now", and how far through it we are (-1 when the
+  // displayed date is not today in the home zone)
+  const nowExact=(NOW-anchor)/3600000;
+  const nowCol=(nowExact>=0&&nowExact<N)?Math.floor(nowExact):-1;
+  const nowPct=((nowExact-Math.floor(nowExact))*100).toFixed(1);
+
+  const GT='grid-template-columns:repeat('+N+',minmax(var(--cellmin,34px),1fr))';
+
+  // --- column ruler, in home-zone hours ---
+  html+='<div class="gwrap"><div class="row hdr"><div class="lab">Place / Timezone</div>'+
+    '<div class="cells" style="'+GT+'">';
+  const home24=uses24(S.home);
+  instants.forEach((t,i)=>{
+    const w=wall(t,S.home);
+    const lab=home24?pad(w.h):((w.h%12===0?12:w.h%12)+(w.h<12?"a":"p"));
+    const edge=nowCol>=N-1?" pr":(nowCol<=0?" pl":"");
+    html+='<div class="hc'+(i===nowCol?" iscur":"")+(i===pinned?" pin":"")+
+      '" data-col="'+i+'"'+(i===nowCol?' data-nowpct="'+nowPct+'"':"")+'>'+lab+
+      (i===nowCol?'<span class="nowpill'+edge+'" style="'+
+        (edge?"":"left:"+nowPct+"%")+'">NOW</span>':"")+'</div>';
+  });
+  html+='</div></div>';
+
+  // --- rows ---
+  S.rows.forEach((tz,ri)=>{
+    const isHome=tz===S.home;
+    const now=wall(NOW,tz);                 // the clock stays live
+    const off=offsetAt(REF,tz)-homeOff;     // the badge follows the grid
+    const r24=uses24(tz);                   // per row, so MX can mix formats
+    const timeStr=hhmm(now,r24);
+    const abbr=abbrOf(REF,tz);
+
+    html+='<div class="row'+(isHome?" home":"")+'">'+
+      '<div class="lab">'+
+        '<button class="star'+(isHome?" on":"")+'" data-home="'+tz+
+          '" title="'+(isHome?"Home zone":"Set as home zone")+'">'+
+          (isHome?"&#9733;":"&#9734;")+'</button>'+
+        '<div class="badge">'+(isHome?"0":offLabel(off))+'</div>'+
+        '<div class="lmain">'+
+          '<div class="znames"><div class="zname" data-home="'+tz+
+            '" title="'+tz+' (click to set as home)">'+cityOf(tz)+
+            (abbr?'<span class="abbr">'+abbr+'</span>':"")+'</div>'+
+            '<div class="zsub">'+subOf(tz)+'</div></div>'+
+          '<div class="tblock"><div class="ztime">'+timeStr+'</div>'+
+            '<div class="zdate">'+now.wd+", "+titleMon(now.mo)+" "+now.d+'</div></div>'+
+        '</div>'+
+        '<div class="acts">'+
+          '<button data-up="'+ri+'" title="Move up">&#9650;</button>'+
+          '<button data-rm="'+ri+'" title="Remove">&times;</button>'+
+        '</div>'+
+      '</div>'+
+      '<div class="cells" style="'+GT+'">';   // GT uses --cellmin, tightened on phones
+
+    let prevDay=null,prevMo=null;
+    cellData[ri].forEach((w,i)=>{
+      const dayChanged=prevDay!==null&&w.d!==prevDay;
+      const moChanged=prevMo!==null&&w.mo!==prevMo;
+      prevDay=w.d; prevMo=w.mo;
+      const cls=["c"];
+      if(w.wd==="Sat"||w.wd==="Sun") cls.push("we");
+      if(allBiz[i]) cls.push("allbiz");
+      if(i===pinned) cls.push("pin");
+      let inner=cellInner(w,r24);
+      // the rollover marks the boundary rather than replacing the hour
+      if(dayChanged) inner+='<i class="dayline"></i><span class="daypill'+
+        (moChanged?" force-mo":"")+(i===N-1?" dp-right":"")+
+        '"><span class="dp-wd">'+w.wd.toUpperCase()+
+        ' </span><span class="dp-mo">'+MON[w.mo-1]+' </span>'+w.d+'</span>';
+      html+='<div class="'+cls.join(" ")+'" data-col="'+i+'" style="background:'+
+        hourColor(w.h,w.mi)+'">'+inner+'</div>';
+    });
+    html+='</div></div>';
+  });
+
+  html+='</div>';   // /.gwrap
+
+  // --- pinned comparison, else the info line ---
+  if(pinned!==null&&instants[pinned]!==undefined){
+    const t=instants[pinned];
+    const hw=wall(t,S.home);
+    html+='<div class="pinbar"><span class="plabel">Pinned &middot; '+
+      hw.wd+" "+hw.d+" "+titleMon(hw.mo)+'</span>'+
+      S.rows.map(tz=>{
+        const w=wall(t,tz);
+        const ts=hhmm(w,uses24(tz));
+        // same 9-5 rule as the grid's green underline
+        const band=(w.h>=9&&w.h<=17)?"w-biz"
+                  :((w.h>=7&&w.h<=8)||(w.h>=18&&w.h<=21))?"w-edge":"w-off";
+        const we=w.wd==="Sat"||w.wd==="Sun";
+        // the date is stated once on the bar; only call out rows that differ
+        const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
+        return '<span class="pinchip '+(we?"w-off":band)+'" style="background:'+
+          hourColor(w.h,w.mi)+'"><b>'+cityOf(tz)+'</b> '+ts+
+          (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
+          (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
+      }).join("")+
+      '<span class="spacer"></span>'+
+      '<span class="pinlegend"><em><i style="background:var(--biz)"></i>9&ndash;5</em>'+
+      '<em><i style="background:#e0a340"></i>fringe</em>'+
+      '<em><i style="background:#93a4b8"></i>off hours</em></span>'+
+      '<span class="lk" id="unpin">Clear pin</span>'+
+      '<div class="pinsent"><span id="psText">'+pinSentence(t)+'</span>'+
+        '<button class="ui" id="psCopy">Copy sentence</button></div></div>';
+  }else{
+    const dayNote=len===24?"":(" &middot; <b>"+len+"-hour day</b> here (DST transition)");
+    html+='<footer><span>'+N+' hours from '+
+      new Date(anchor).toISOString().replace(".000Z","Z")+dayNote+'</span>'+
+      '<span>Green underline = every zone in working hours (Mon&ndash;Fri 9&ndash;5)</span>'+
+      '<span>Hatched = weekend</span>'+
+      '<span>Click any column to pin a comparison</span></footer>';
+  }
+
+  app.innerHTML=html;
+  wire();
+}
+
+/* Draw the pinned column as a single rounded outline spanning the ruler and
+   every row. Measured from the DOM rather than computed from column widths,
+   so it stays correct at any width and through horizontal scrolling. */
+/* Touch screens fire mouseenter on a tap but never mouseleave, which strands
+   the hover outline on the last column tapped. Detected from actual use
+   rather than a (hover: hover) media query -- some embedders report
+   "hover: none" on a perfectly ordinary desktop, which would silently kill
+   hover there. A mouse never fires touchstart; a finger always does, and on
+   a hybrid the most recent input wins. */
+let hovCol=null, touchMode=false, gridScrollLeft=0, scrollKey="", dragged=false;
+
+/* Every render rebuilds .gwrap, which resets its scrollLeft to 0 -- so the
+   30-second clock refresh used to throw away the user's scroll position.
+   Restore it, and when the view genuinely changes (zone, date, rows) land on
+   the hours that matter rather than on local midnight. Matters most on a
+   phone, where only a handful of columns are visible at once. */
+/* Phones only: size the label to the widest zone actually on screen instead
+   of a fixed guess, so "Berlin / Tokyo / Cairo" gives the grid ~20px more
+   than "New York / Los Angeles" would. Floored so it never gets too cramped
+   to read, capped so one long name cannot swallow the grid. */
+function fitLabel(){
+  const root=document.documentElement;
+  if(innerWidth>560){ root.style.removeProperty("--labw"); return; }
+  const labs=document.querySelectorAll(".row:not(.hdr) .lab");
+  if(!labs.length) return;
+  /* Measure the text off-layout with canvas. Anything measured from the DOM
+     is circular here: scrollWidth returns the laid-out box when the text is
+     shorter, and a Range is clamped by the element's own clipped box -- both
+     just hand back the width set on the previous pass, so the label can only
+     creep toward the right answer instead of landing on it. */
+  const ctx=fitLabel.ctx||(fitLabel.ctx=document.createElement("canvas").getContext("2d"));
+  const textW=function(el,txt){
+    if(!el||!txt) return 0;
+    const cs=getComputedStyle(el);
+    ctx.font=cs.fontWeight+" "+cs.fontSize+" "+cs.fontFamily;
+    return ctx.measureText(txt).width;
+  };
+  let need=0;
+  labs.forEach(function(l){
+    const n=l.querySelector(".zname"), b=l.querySelector(".badge"),
+          t=l.querySelector(".ztime");
+    // first child node only: skips the abbreviation span, hidden at this size
+    const city=n&&n.firstChild?n.firstChild.textContent:"";
+    need=Math.max(need,textW(n,city),
+      textW(b,b&&b.textContent)+4+textW(t,t&&t.textContent));
+  });
+  const chrome=7+4+24+3;           // padding + gap + remove button + padding
+  root.style.setProperty("--labw",
+    Math.max(96,Math.min(150,Math.ceil(need)+chrome))+"px");
+}
+
+function syncGridScroll(){
+  const gw=document.querySelector(".gwrap"); if(!gw) return;
+  const key=S.home+"|"+S.date.y+"-"+S.date.mo+"-"+S.date.d+"|"+S.rows.join(",");
+  if(key===scrollKey){ gw.scrollLeft=gridScrollLeft; return; }
+  scrollKey=key;
+  const t=gw.querySelector(".hc.iscur")||gw.querySelector('.hc[data-col="9"]');
+  if(t){
+    const g=gw.getBoundingClientRect(), r=t.getBoundingClientRect();
+    let x=Math.max(0,gw.scrollLeft+(r.left-g.left)-(gw.clientWidth-r.width)/2);
+    // land on a column boundary: a grid sliced mid-cell looks unfinished
+    if(r.width>0) x=Math.round(x/r.width)*r.width;
+    gw.scrollLeft=x;
+  }
+  gridScrollLeft=gw.scrollLeft;
+}
+document.addEventListener("touchstart",function(){ touchMode=true; },{passive:true});
+/* Column-spanning marks are drawn as single overlays rather than per-cell
+   borders, which the row rules would otherwise chop into segments.
+   Measured from the DOM so they stay exact at any width and while scrolling.
+   Everything is inset, never overhanging: a 1px overhang was once enough to
+   push the page past the vertical-scrollbar threshold, and since #app is
+   centred, gaining that scrollbar shifted the grid out from under the box. */
+function placeOverlays(){
+  const gw=document.querySelector(".gwrap");
+  if(!gw) return;
+  gw.querySelectorAll(".pinbox,.nowbar,.hoverbox").forEach(e=>e.remove());
+  const rows=gw.querySelectorAll(".row:not(.hdr)");
+  if(!rows.length) return;
+  const g=gw.getBoundingClientRect();
+  const X=r=>r.left-g.left+gw.scrollLeft, Y=r=>r.top-g.top+gw.scrollTop;
+  const first=rows[0].getBoundingClientRect(),
+        last=rows[rows.length-1].getBoundingClientRect();
+
+  const colBox=(cls,col)=>{
+    const head=gw.querySelector('.hc[data-col="'+col+'"]');
+    const cells=gw.querySelectorAll('.c[data-col="'+col+'"]');
+    if(!head||!cells.length) return;
+    const a=head.getBoundingClientRect(),
+          b=cells[cells.length-1].getBoundingClientRect();
+    const d=document.createElement("div");
+    d.className=cls;
+    d.style.left=X(a)+"px"; d.style.top=Y(a)+"px";
+    d.style.width=a.width+"px"; d.style.height=(b.bottom-a.top)+"px";
+    gw.appendChild(d);
+  };
+  if(pinned!==null) colBox("pinbox",pinned);
+  if(hovCol!==null&&hovCol!==pinned) colBox("hoverbox",hovCol);
+
+  /* day-pill detail follows the measured cell width, so it also shrinks when
+     a DST day adds a 25th column rather than only when the window narrows */
+  const cw=(gw.querySelector(".hc")||{getBoundingClientRect:()=>({width:0})})
+             .getBoundingClientRect().width;
+  gw.classList.toggle("lbl-full",cw>=34);   // 34 = the grid's track minimum
+  gw.classList.toggle("scrolls",gw.scrollWidth>gw.clientWidth+1);
+
+  /* the now bar hangs off the bottom of the NOW pill rather than starting at
+     the first row, so the marker reads as one continuous object */
+  const cur=gw.querySelector(".hc.iscur");
+  if(cur&&cur.dataset.nowpct!==undefined){
+    const c=cur.getBoundingClientRect();
+    const pill=cur.querySelector(".nowpill");
+    const topY=pill?Y(pill.getBoundingClientRect())+pill.getBoundingClientRect().height
+                   :Y(first);
+    const bar=document.createElement("div");
+    bar.className="nowbar";
+    bar.style.left=(X(c)+c.width*(parseFloat(cur.dataset.nowpct)/100)-1)+"px";
+    bar.style.top=topY+"px";
+    bar.style.height=(last.bottom-g.top-gw.scrollTop-topY)+"px";
+    gw.appendChild(bar);
+  }
+}
+window.addEventListener("resize",placeOverlays);
+
+/* ============================================================
+   EVENTS
+   ============================================================ */
+function wire(){
+  const $=s=>document.querySelector(s), $$=s=>[...document.querySelectorAll(s)];
+  let gw2;
+
+  $$(".day").forEach(el=>el.onclick=()=>{
+    const p=el.dataset.d.split("-");
+    S.date={y:+p[0],mo:+p[1],d:+p[2]}; pinned=null; saveState(); render();
+  });
+  const dp=$("#dp"); if(dp) dp.onchange=()=>{
+    const p=dp.value.split("-");
+    if(p.length===3&&p[0]){ S.date={y:+p[0],mo:+p[1],d:+p[2]}; pinned=null; saveState(); render(); }
+  };
+  $$("[data-fmt]").forEach(b=>b.onclick=()=>{
+    S.fmt=b.dataset.fmt; saveState(); render();
+  });
+  $("#copy").onclick=()=>{
+    const btn=$("#copy"), keep=btn.innerHTML;   // holds the full/min label spans
+    const done=t=>{ btn.textContent=t; setTimeout(()=>{btn.innerHTML=keep;},1400); };
+    if(navigator.clipboard&&window.isSecureContext){
+      navigator.clipboard.writeText(location.href).then(()=>done("Copied!"),()=>done("See address bar"));
+    }else{ done("See address bar"); }
+  };
+  const rs=$("#reset"); if(rs) rs.onclick=()=>{
+    try{localStorage.removeItem(LS);}catch(e){}
+    history.replaceState(null,"","#");
+    pinned=null; S=defaultState(); saveState(); render();
+  };
+  const tb=$("#todaybtn"); if(tb) tb.onclick=()=>{
+    S.date=todayIn(S.home); pinned=null; saveState(); render();
+  };
+  const step=n=>()=>{ S.date=addDays(S.date,n); pinned=null; saveState(); render(); };
+  const dpv=$("#dprev"); if(dpv) dpv.onclick=step(-1);
+  const dnx=$("#dnext"); if(dnx) dnx.onclick=step(1);
+  const up=$("#unpin"); if(up) up.onclick=()=>{ pinned=null; render(); };
+  const pc=$("#psCopy"); if(pc) pc.onclick=()=>{
+    const txt=$("#psText").textContent, keep=pc.textContent;
+    const done=t=>{ pc.textContent=t; setTimeout(()=>{pc.textContent=keep;},1400); };
+    if(navigator.clipboard&&window.isSecureContext)
+      navigator.clipboard.writeText(txt).then(()=>done("Copied!"),()=>selectSentence());
+    else selectSentence();
+    // file:// has no clipboard API, so fall back to selecting it for Ctrl+C
+    function selectSentence(){
+      const r=document.createRange(); r.selectNodeContents($("#psText"));
+      const s=getSelection(); s.removeAllRanges(); s.addRange(r); done("Selected");
+    }
+  };
+
+  $$("[data-rm]").forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.rm, gone=S.rows[i];
+    S.rows.splice(i,1);
+    if(gone===S.home&&S.rows.length){ S.home=S.rows[0]; S.date=todayIn(S.home); }
+    saveState(); render();
+  });
+  $$("[data-up]").forEach(b=>b.onclick=()=>{
+    const i=+b.dataset.up; if(i===0) return;
+    const t=S.rows[i-1]; S.rows[i-1]=S.rows[i]; S.rows[i]=t;
+    saveState(); render();
+  });
+  $$("[data-home]").forEach(el=>el.onclick=()=>{
+    S.home=el.dataset.home; S.date=todayIn(S.home); pinned=null; saveState(); render();
+  });
+
+  // crosshair: hover is class-only, pinning re-renders so the bar can update
+  $$(".c").forEach(c=>{
+    c.onmouseenter=()=>{
+      if(touchMode) return;              // a tap, not a hovering pointer
+      const i=c.dataset.col;
+      $$('.c[data-col="'+i+'"],.hc[data-col="'+i+'"]').forEach(x=>x.classList.add("hov"));
+      hovCol=+i; placeOverlays();
+    };
+    c.onmouseleave=()=>{                 // always clears, harmless if never set
+      $$(".c.hov,.hc.hov").forEach(x=>x.classList.remove("hov"));
+      hovCol=null; placeOverlays();
+    };
+    // clear hover on click too: a hybrid laptop reports hover:hover but a
+    // tap on its touchscreen still never sends mouseleave
+    c.onclick=()=>{
+      if(dragged){ dragged=false; return; }   // that was a scroll, not a tap
+      const i=+c.dataset.col; pinned=(pinned===i?null:i);
+      hovCol=null; render();
+    };
+  });
+
+  // zone search
+  const q=$("#q"), drop=$("#drop");
+  let hi=-1, list=[];
+  const close=()=>{ drop.classList.remove("open"); hi=-1; };
+  const show=()=>{
+    const v=q.value.trim().toLowerCase();
+    const C=catalog();
+    list=(v?C.filter(z=>z[2].indexOf(v)>=0):C).slice(0,60);
+    if(!list.length){ close(); return; }
+    drop.innerHTML=list.map((z,i)=>'<div data-i="'+i+'"><span class="off">'+
+      utcPart(z[0])+'</span>'+shortName(z[0])+
+      (z[4]&&!/^GMT[+-]/.test(z[4])?'<span class="abbr">'+z[4]+'</span>':"")+
+      '</div>').join("");
+    drop.classList.add("open");
+    [...drop.children].forEach(el=>el.onmousedown=e=>{ e.preventDefault(); pick(+el.dataset.i); });
+  };
+  // repaint once the deferred abbreviation pass lands, if still open
+  onAbbrs=()=>{ if(drop.classList.contains("open")) show(); };
+
+  /* Draw now, and again on the next task as a safety net. Not rAF alone:
+     that is throttled while the page is not painting, which would leave the
+     overlays missing entirely in a background tab. */
+  gw2=$(".gwrap");
+  if(gw2){
+    gw2.onscroll=function(){ gridScrollLeft=gw2.scrollLeft; placeOverlays(); };
+    /* A swipe to scroll the grid ends in a click on whatever cell the finger
+       started on, which would pin a column the user never meant to choose.
+       Remember whether the touch travelled, and let the click handler bail.
+       .gwrap is rebuilt each render, so these never accumulate. */
+    let sx=0;
+    gw2.addEventListener("touchstart",function(e){
+      sx=e.touches[0].clientX; dragged=false;
+    },{passive:true});
+    gw2.addEventListener("touchmove",function(e){
+      if(Math.abs(e.touches[0].clientX-sx)>8) dragged=true;
+    },{passive:true});
+  }
+  fitLabel();            // before the scroll maths: it changes the grid's width
+  syncGridScroll();
+  placeOverlays(); setTimeout(placeOverlays,0);
+  const pick=i=>{
+    const z=list[i]; if(!z) return;
+    if(!S.rows.includes(z[1])) S.rows.push(z[1]);
+    q.value=""; close(); saveState(); render();
+  };
+  q.oninput=show;
+  q.onfocus=show;
+  q.onblur=()=>setTimeout(close,150);
+  q.onkeydown=e=>{
+    if(e.key==="ArrowDown"||e.key==="ArrowUp"){
+      e.preventDefault();
+      hi=Math.max(0,Math.min(list.length-1,hi+(e.key==="ArrowDown"?1:-1)));
+      [...drop.children].forEach((el,i)=>el.classList.toggle("hi",i===hi));
+      if(drop.children[hi]) drop.children[hi].scrollIntoView({block:"nearest"});
+    }else if(e.key==="Enter"){ pick(hi<0?0:hi); }
+    else if(e.key==="Escape"){ close(); q.blur(); }
+  };
+}
+
+/* ============================================================
+   BOOT
+   ============================================================ */
+if(location.search.indexOf("selftest")>=0){
+  selftest();
+}else{
+  S=loadState();
+  S.rows=[...new Set(S.rows)]          // a hand-edited hash can repeat a zone
+    .filter(z=>{ try{ wall(Date.now(),z); return true; }catch(e){ return false; } });
+  if(!S.rows.length) S=defaultState();
+  if(!S.rows.includes(S.home)) S.home=S.rows[0];
+  if(!S.date||!validDate(S.date.y,S.date.mo,S.date.d)) S.date=todayIn(S.home);
+  // migrate the old boolean h24 flag to the three-way format setting
+  if(!FMTS[S.fmt]) S.fmt=S.h24===true?"24":"12";
+  delete S.h24;
+  saveState(); render();
+  // live clock refresh -- never while the user is typing a zone search,
+  // since render() rebuilds the DOM and would eat the keystrokes
+  setInterval(()=>{
+    const q=document.getElementById("q");
+    if(document.hasFocus()&&document.activeElement!==q) render();
+  },30000);
+  // the top-bar clock ticks on its own: one text node, no re-render
+  setInterval(()=>{
+    const el=document.getElementById("ncT");
+    if(el) el.innerHTML=nowClockHTML();
+  },1000);
+}
+</script>
+</body>
+</html>

@@ -1,0 +1,11 @@
+# screenshots and scratch renders
+*.png
+*.jpg
+_shot.html
+
+# OS / editor noise
+Thumbs.db
+desktop.ini
+.DS_Store
+.vscode/
+.idea/
