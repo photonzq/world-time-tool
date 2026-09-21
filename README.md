@@ -33,6 +33,23 @@ both of which are restricted on `file://`.
   by working hours, plus a copy-ready sentence for an email or a prompt.
 - Weekend hatching, ISO week number, live clock, permalinks in the URL hash.
 
+## Links
+
+**Link** copies the current view, including the pinned column if one is set:
+
+    .../#z=am.New_York,am.Los_Angeles,eu.Berlin,as.Shanghai&d=20260921&p=14
+
+`z` is the rows, `h` the home zone when it is not the first row, `d` the date,
+`t` the clock format, `p` the pinned column. IANA area prefixes fold to two
+letters (`am.` = `America/`), and the fragment carries `/` and `,` unescaped,
+which together roughly halve the length.
+
+Omitted keys take their default, so a link with no `d` always opens on today —
+useful for a bookmark. Pinning forces `d` to be written, because a pin names one
+instant and would otherwise land on the wrong day. Links written by earlier
+versions, with percent-encoded full zone names, still load and are rewritten to
+the short form.
+
 ## Design notes
 
 All date arithmetic derives from one primitive: `Intl.DateTimeFormat`
@@ -50,10 +67,10 @@ days come out right.
 
 ## Tests
 
-Open `index.html?selftest=1`. It runs 77 assertions covering DST transitions,
-offset arithmetic, ISO weeks, the zone catalogue and the clock-format logic,
-and prints a pass/fail table. Golden values were cross-checked against an
-independent implementation.
+Open `index.html?selftest=1`. It runs 93 assertions covering DST transitions,
+offset arithmetic, ISO weeks, the zone catalogue, the link codec and the
+clock-format logic, and prints a pass/fail table. Golden values were
+cross-checked against an independent implementation.
 
 ## Browser support
 

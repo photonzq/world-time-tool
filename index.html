@@ -934,6 +934,29 @@ function selftest(){
                  z[2].indexOf("cest")>=0).length,1);
   eq("synthLabel handles nested ids",
      synthLabel("America/Argentina/Catamarca").indexOf("Catamarca, Argentina")>0,true);
+  // --- hash codec ---
+  const rt=z=>zUnpack(zPack(z));
+  eq("zPack round-trip America/New_York",rt("America/New_York"),"America/New_York");
+  eq("zPack round-trip nested id",rt("America/Argentina/Catamarca"),"America/Argentina/Catamarca");
+  eq("zPack round-trip Etc/GMT+5 (the + must survive)",rt("Etc/GMT+5"),"Etc/GMT+5");
+  eq("zPack round-trip bare UTC",rt("UTC"),"UTC");
+  eq("zPack round-trip Australia/Lord_Howe",rt("Australia/Lord_Howe"),"Australia/Lord_Howe");
+  eq("zPack shortens America/Los_Angeles","am.Los_Angeles",zPack("America/Los_Angeles"));
+  eq("zUnpack passes an unfolded old-link id through",
+     zUnpack("America/Denver"),"America/Denver");
+  eq("every catalogue zone survives a round-trip",
+     catalog().filter(z=>rt(z[1])!==z[1]).length,0);
+  eq("dPack/dUnpack round-trip",JSON.stringify(dUnpack(dPack({y:2026,mo:9,d:7}))),
+     JSON.stringify({y:2026,mo:9,d:7}));
+  eq("dUnpack accepts the old dashed form",dUnpack("2026-09-21").mo,9);
+  eq("dUnpack rejects 2026-99-99",dUnpack("2026-99-99"),null);
+  eq("dUnpack rejects Feb 30",dUnpack("20260230"),null);
+  eq("parseHash decodes an old percent-encoded link",
+     parseHash("h=America%2FNew_York&z=America%2FNew_York%2CEurope%2FBerlin").z,
+     "America/New_York,Europe/Berlin");
+  eq("parseHash keeps + literal (not a space)",parseHash("z=Etc%2FGMT+5").z,"Etc/GMT+5");
+  eq("parseHash reads the pin",parseHash("z=UTC&p=14").p,"14");
+  eq("parseHash ignores a valueless fragment",parseHash("z=UTC&junk").junk,undefined);
   const bad=T.filter(t=>!t[3]).length;
   document.body.innerHTML='<div id="st"><h1>Self test &mdash; '+
     (bad?'<span class="f">'+bad+' FAILED</span>':'<span class="p">all '+T.length+' passed</span>')+
@@ -974,6 +997,49 @@ function validDate(y,mo,d){
   return x.getUTCFullYear()===y&&x.getUTCMonth()===mo-1&&x.getUTCDate()===d;
 }
 
+/* ---------- hash codec ----------
+   URLSearchParams percent-encodes every "/" and "," it writes, which triples
+   the length of the only interesting part of the link. A fragment may carry
+   both literally (RFC 3986: fragment = *( pchar / "/" / "?" ), and "," is a
+   sub-delim), so the hash is written by hand. Values are still decoded on the
+   way in, which is what keeps links written by the old encoder working.
+
+   Zones shrink further by folding the IANA area prefix to two letters. The
+   map is closed -- these are every top-level area tzdb defines -- and an
+   unrecognised prefix passes through verbatim, so an old link carrying a full
+   "America/Denver" still reads correctly. */
+const AREA={af:"Africa",am:"America",an:"Antarctica",ar:"Arctic",as:"Asia",
+            at:"Atlantic",au:"Australia",eu:"Europe",in:"Indian",
+            pa:"Pacific",et:"Etc",us:"US"};
+const AREA_R={}; for(const k in AREA) AREA_R[AREA[k]]=k;
+function zPack(z){
+  const i=z.indexOf("/"), a=i<0?null:AREA_R[z.slice(0,i)];
+  return a?a+"."+z.slice(i+1):z;                  // no dot in any IANA id
+}
+function zUnpack(s){
+  const i=s.indexOf("."), a=i<0?null:AREA[s.slice(0,i)];
+  return a?a+"/"+s.slice(i+1):s;
+}
+function dPack(D){ return ""+D.y+pad(D.mo)+pad(D.d); }
+function dUnpack(s){                              // 20260921, or the older 2026-09-21
+  let y,mo,d;
+  if(/^\d{8}$/.test(s)){ y=+s.slice(0,4); mo=+s.slice(4,6); d=+s.slice(6); }
+  else{ const p=s.split("-"); if(p.length!==3) return null;
+        y=+p[0]; mo=+p[1]; d=+p[2]; }
+  return validDate(y,mo,d)?{y:y,mo:mo,d:d}:null;
+}
+/* Hand-rolled rather than URLSearchParams because that decodes "+" as a
+   space, which would corrupt Etc/GMT+5. decodeURIComponent does not. */
+function parseHash(h){
+  const o={};
+  for(const kv of h.split("&")){
+    const i=kv.indexOf("=");
+    if(i<1) continue;
+    try{ o[kv.slice(0,i)]=decodeURIComponent(kv.slice(i+1)); }catch(e){}
+  }
+  return o;
+}
+
 function defaultState(){
   const home=detectHome();
   const rows=[home];
@@ -985,15 +1051,15 @@ function loadState(){
   const h=location.hash.slice(1);
   if(h){
     try{
-      const q=new URLSearchParams(h);
-      const rows=[...new Set((q.get("z")||"").split(",").filter(Boolean))];
+      const q=parseHash(h);
+      const rows=[...new Set((q.z||"").split(",").filter(Boolean).map(zUnpack))];
       if(rows.length){
-        const home=q.get("h")||rows[0];
-        const ds=(q.get("d")||"").split("-");
-        const ok=ds.length===3&&validDate(+ds[0],+ds[1],+ds[2]);
-        const date=ok?{y:+ds[0],mo:+ds[1],d:+ds[2]}:todayIn(home);
-        const t=q.get("t");
-        return {home,rows,date,fmt:FMTS[t]?t:"12"};
+        const home=q.h?zUnpack(q.h):rows[0];       // omitted when it is the first row
+        const date=(q.d&&dUnpack(q.d))||todayIn(home);
+        // the pin lives outside S because it is a column index, not a setting;
+        // range-checking needs the column count, so render() does it
+        pinned=(q.p!==undefined&&/^\d{1,3}$/.test(q.p))?+q.p:null;
+        return {home,rows,date,fmt:FMTS[q.t]?q.t:"12"};
       }
     }catch(e){}
   }
@@ -1007,11 +1073,17 @@ function saveState(){
   // keep home consistent with the visible rows after any mutation
   if(S.rows.length&&!S.rows.includes(S.home)) S.home=S.rows[0];
   try{ localStorage.setItem(LS,JSON.stringify(S)); }catch(e){}
-  const q=new URLSearchParams();
-  q.set("h",S.home); q.set("z",S.rows.join(","));
-  q.set("d",S.date.y+"-"+pad(S.date.mo)+"-"+pad(S.date.d));
-  if(S.fmt&&S.fmt!=="12") q.set("t",S.fmt);
-  history.replaceState(null,"","#"+q.toString());
+  const P=["z="+S.rows.map(zPack).join(",")];
+  if(S.home!==S.rows[0]) P.push("h="+zPack(S.home));
+  /* A dateless link means "today", which is what you want from a bookmark --
+     but only while nothing is pinned. A pin names one instant, so the date it
+     belongs to has to travel with it or the link points at the wrong day. */
+  const t0=todayIn(S.home);
+  if(pinned!==null||S.date.y!==t0.y||S.date.mo!==t0.mo||S.date.d!==t0.d)
+    P.push("d="+dPack(S.date));
+  if(S.fmt&&S.fmt!=="12") P.push("t="+S.fmt);
+  if(pinned!==null) P.push("p="+pinned);
+  history.replaceState(null,"","#"+P.join("&"));
 }
 
 /* ============================================================
@@ -1049,6 +1121,8 @@ function render(){
   const len=hoursInDay(D.y,D.mo,D.d,S.home);
   const N=Math.ceil(len);
   const instants=[]; for(let i=0;i<N;i++) instants.push(anchor+i*3600000);
+  // a hand-edited p=, or a tzdata version that disagrees about the day length
+  if(pinned!==null&&!(pinned>=0&&pinned<N)){ pinned=null; saveState(); }
 
   // --- header ---
   const today=todayIn(S.home);
@@ -1417,7 +1491,7 @@ function wire(){
   const step=n=>()=>{ S.date=addDays(S.date,n); pinned=null; saveState(); render(); };
   const dpv=$("#dprev"); if(dpv) dpv.onclick=step(-1);
   const dnx=$("#dnext"); if(dnx) dnx.onclick=step(1);
-  const up=$("#unpin"); if(up) up.onclick=()=>{ pinned=null; render(); };
+  const up=$("#unpin"); if(up) up.onclick=()=>{ pinned=null; saveState(); render(); };
   const pc=$("#psCopy"); if(pc) pc.onclick=()=>{
     const txt=$("#psText").textContent, keep=pc.textContent;
     const done=t=>{ pc.textContent=t; setTimeout(()=>{pc.textContent=keep;},1400); };
@@ -1463,7 +1537,7 @@ function wire(){
     c.onclick=()=>{
       if(dragged){ dragged=false; return; }   // that was a scroll, not a tap
       const i=+c.dataset.col; pinned=(pinned===i?null:i);
-      hovCol=null; render();
+      hovCol=null; saveState(); render();
     };
   });
 
