@@ -35,6 +35,10 @@ both of which are restricted on `file://`.
   skipped entirely when it crossed the date line.
 - **Pin a column** to get every zone's local time for that instant, colour-coded
   by working hours, plus a copy-ready sentence for an email or a prompt.
+- **Drag the divider** on the right of the place column to widen it when a
+  zone's full name does not fit; double-click the divider to reset. The width
+  is remembered. Hovering a place or its subtitle shows the full text and the
+  IANA id regardless.
 - Weekend hatching, ISO week number, live clock, permalinks in the URL hash.
 
 ## Links
@@ -139,7 +143,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 122 assertions covering DST
+`index.html?selftest=1` locally. It runs 127 assertions covering DST
 transitions, offset arithmetic, ISO weeks, the zone catalogue, the link codec
 and the clock-format logic, and prints a pass/fail table. Golden values were
 cross-checked against an independent implementation.

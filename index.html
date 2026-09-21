@@ -135,9 +135,22 @@ button.ui.on{background:var(--accent);border-color:var(--accent);color:#fff}
 /* sticky so the zone stays readable while the hour grid scrolls sideways */
 /* z-index must clear every mark inside the grid (day pills 3, NOW pill 4),
    or those slide out from under the sticky label when the grid is scrolled */
-.lab{width:322px;flex:0 0 322px;display:flex;align-items:center;gap:7px;
+.lab{width:var(--labwd,322px);flex:0 0 var(--labwd,322px);
+  display:flex;align-items:center;gap:7px;
   padding:7px 12px;border-right:1px solid var(--line);
   position:sticky;left:0;z-index:7;background:#fff}
+/* Drag the frozen column wider when a zone's full name does not fit. The grip
+   lives inside .lab so it inherits the stickiness -- anything absolutely
+   positioned in .gwrap instead would scroll away from the divider. It hangs
+   2px past the border for a usable hit target; .lab already sits above the
+   cells at z-index 7, so that sliver takes the pointer. */
+.lgrip{position:absolute;top:0;right:-2px;width:8px;height:100%;
+  cursor:col-resize;touch-action:none}
+.lgrip::after{content:"";position:absolute;left:2px;top:0;width:2px;height:100%;
+  background:transparent;transition:background .12s}
+/* highlight the whole divider, not just the row under the cursor; :has() would
+   do it but postdates the browser floor this file targets */
+.gwrap.gripping .lgrip::after{background:var(--accent)}
 .row.home .lab{background:#f8fbff}
 /* only when the grid actually scrolls: tells the eye that cells pass UNDER
    the frozen column, rather than being cut off by it */
@@ -372,11 +385,11 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
 
 /* ---------- responsive: shed the label column progressively ---------- */
 @media (max-width:1400px){
-  .lab{width:280px;flex-basis:280px}
+  .lab{width:var(--labwd,280px);flex-basis:var(--labwd,280px)}
   .iana{display:none}
 }
 @media (max-width:1100px){
-  .lab{width:232px;flex-basis:232px;gap:6px}
+  .lab{width:var(--labwd,232px);flex-basis:var(--labwd,232px);gap:6px}
   .zsub{display:none}
   /* stack name over clock so the name gets the whole label width */
   .lmain{flex-direction:column;align-items:stretch;gap:0}
@@ -385,7 +398,7 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
 }
 @media (max-width:820px){
   body{padding:8px}
-  .lab{width:200px;flex-basis:200px}
+  .lab{width:var(--labwd,200px);flex-basis:var(--labwd,200px)}
   .zdate{display:none}
   .acts{flex-direction:row}
   .brand{font-size:15px}
@@ -437,6 +450,7 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
        width:var(--labw,118px);flex-basis:var(--labw,118px);
        padding:7px 3px 7px 7px}
   .lmain{display:contents}
+  .lgrip{display:none}          /* fitLabel() owns the width at this size */
   .znames{grid-area:nm;min-width:0}
   /* the offset as a chip costs ~8px of padding on the line that actually
      governs the label width; plain coloured text reads the same and is quieter */
@@ -730,6 +744,10 @@ function nowClockHTML(){
   return h+":"+pad(w.mi)+sec+(w.h<12?" am":" pm");
 }
 function subOf(tz){ const m=zoneOf(tz); return m?shortName(m[0]):tz; }
+/* Zone labels carry & and ( ) -- "Eastern Time (US & Canada)" -- which browsers
+   tolerate in an attribute but only by guessing. Escape rather than rely on it. */
+function esc(t){ return String(t).replace(/&/g,"&amp;").replace(/</g,"&lt;")
+  .replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
 /* ICU only knows 14 real short abbreviations in en-US (EDT, PST, AKST, GMT...)
    and answers "GMT+8" for everything else. Its 166 *long* names are a far
    better source: initials give CEST, AEDT, JST, SAST correctly. But initials
@@ -934,6 +952,15 @@ function selftest(){
                  z[2].indexOf("cest")>=0).length,1);
   eq("synthLabel handles nested ids",
      synthLabel("America/Argentina/Catamarca").indexOf("Catamarca, Argentina")>0,true);
+  // --- resizable frozen column ---
+  eq("label width clamps below the minimum",clampLabW(10),LABW_MIN);
+  eq("label width clamps above the maximum",clampLabW(9999),LABW_MAX);
+  eq("label width passes a sane value through",clampLabW(410.4),410);
+  eq("attribute escaping handles the ampersand in zone labels",
+     esc("Eastern Time (US & Canada)"),"Eastern Time (US &amp; Canada)");
+  eq("attribute escaping handles quotes and angle brackets",
+     esc('a"b<c>d'),"a&quot;b&lt;c&gt;d");
+
   // --- packed hash ---
   eq("ZONES is 139 entries",ZONES.length,139);
   eq("ZONES ids are unique",new Set(ZONES.map(z=>z[1])).size,139);
@@ -1422,7 +1449,8 @@ function render(){
   const GT='grid-template-columns:repeat('+N+',minmax(var(--cellmin,34px),1fr))';
 
   // --- column ruler, in home-zone hours ---
-  html+='<div class="gwrap"><div class="row hdr"><div class="lab">Place / Timezone</div>'+
+  html+='<div class="gwrap"><div class="row hdr"><div class="lab">Place / Timezone'+
+      '<i class="lgrip" title="Drag to resize &middot; double-click to reset"></i></div>'+
     '<div class="cells" style="'+GT+'">';
   const home24=uses24(S.home);
   instants.forEach((t,i)=>{
@@ -1453,9 +1481,11 @@ function render(){
         '<div class="badge">'+(isHome?"0":offLabel(off))+'</div>'+
         '<div class="lmain">'+
           '<div class="znames"><div class="zname" data-home="'+tz+
-            '" title="'+tz+' (click to set as home)">'+cityOf(tz)+
+            '" title="'+esc(cityOf(tz)+" \u2014 "+tz+" (click to set as home)")+'">'+
+            cityOf(tz)+
             (abbr?'<span class="abbr">'+abbr+'</span>':"")+'</div>'+
-            '<div class="zsub">'+subOf(tz)+'</div></div>'+
+            '<div class="zsub" title="'+esc(subOf(tz)+" \u2014 "+tz)+'">'+
+            subOf(tz)+'</div></div>'+
           '<div class="tblock"><div class="ztime">'+timeStr+'</div>'+
             '<div class="zdate">'+now.wd+", "+titleMon(now.mo)+" "+now.d+'</div></div>'+
         '</div>'+
@@ -1463,6 +1493,7 @@ function render(){
           '<button data-up="'+ri+'" title="Move up">&#9650;</button>'+
           '<button data-rm="'+ri+'" title="Remove">&times;</button>'+
         '</div>'+
+        '<i class="lgrip" title="Drag to resize &middot; double-click to reset"></i>'+
       '</div>'+
       '<div class="cells" style="'+GT+'">';   // GT uses --cellmin, tightened on phones
 
@@ -1578,6 +1609,62 @@ function fitLabel(){
   const chrome=7+4+24+3;           // padding + gap + remove button + padding
   root.style.setProperty("--labw",
     Math.max(96,Math.min(150,Math.ceil(need)+chrome))+"px");
+}
+
+/* ---------- resizable frozen column ----------
+   The width lives on :root, so it survives render() replacing the grid and
+   only has to be restored once at boot. Below 560px fitLabel() owns the width
+   instead and the grip is hidden, so the two never both write --labwd. */
+const LABW="wtb.labw", LABW_MIN=200, LABW_MAX=640;
+let labDragging=false;
+function applyLabW(){
+  let v=null;
+  try{ v=localStorage.getItem(LABW); }catch(e){}
+  const w=parseInt(v,10);
+  if(w>=LABW_MIN&&w<=LABW_MAX)
+    document.documentElement.style.setProperty("--labwd",w+"px");
+  else
+    document.documentElement.style.removeProperty("--labwd");
+}
+function clampLabW(w){ return Math.max(LABW_MIN,Math.min(LABW_MAX,Math.round(w))); }
+function wireGrips(){
+  const gw=document.querySelector(".gwrap"); if(!gw) return;
+  const root=document.documentElement;
+  gw.querySelectorAll(".lgrip").forEach(function(g){
+    g.addEventListener("mouseenter",function(){ gw.classList.add("gripping"); });
+    g.addEventListener("mouseleave",function(){
+      if(!labDragging) gw.classList.remove("gripping"); });
+    g.addEventListener("pointerdown",function(e){
+      e.preventDefault(); e.stopPropagation();   // not a click on the row beneath
+      const w0=g.parentNode.getBoundingClientRect().width, x0=e.clientX;
+      let raf=0;
+      labDragging=true; gw.classList.add("gripping");
+      try{ g.setPointerCapture(e.pointerId); }catch(err){}
+      const move=function(ev){
+        root.style.setProperty("--labwd",clampLabW(w0+ev.clientX-x0)+"px");
+        // overlays are positioned from measured rects, so they must follow
+        if(!raf) raf=requestAnimationFrame(function(){ raf=0; placeOverlays(); });
+      };
+      const up=function(){
+        labDragging=false; gw.classList.remove("gripping");
+        g.removeEventListener("pointermove",move);
+        g.removeEventListener("pointerup",up);
+        g.removeEventListener("pointercancel",up);
+        try{ localStorage.setItem(LABW,
+               parseInt(root.style.getPropertyValue("--labwd"),10)); }catch(err){}
+        placeOverlays();
+      };
+      g.addEventListener("pointermove",move);
+      g.addEventListener("pointerup",up);
+      g.addEventListener("pointercancel",up);
+    });
+    g.addEventListener("dblclick",function(e){
+      e.preventDefault(); e.stopPropagation();
+      root.style.removeProperty("--labwd");
+      try{ localStorage.removeItem(LABW); }catch(err){}
+      placeOverlays();
+    });
+  });
 }
 
 function syncGridScroll(){
@@ -1777,6 +1864,7 @@ function wire(){
     },{passive:true});
   }
   fitLabel();            // before the scroll maths: it changes the grid's width
+  wireGrips();
   syncGridScroll();
   placeOverlays(); setTimeout(placeOverlays,0);
   const pick=i=>{
@@ -1813,6 +1901,7 @@ if(location.search.indexOf("selftest")>=0){
   // migrate the old boolean h24 flag to the three-way format setting
   if(!FMTS[S.fmt]) S.fmt=S.h24===true?"24":"12";
   delete S.h24;
+  applyLabW();
   saveState(); render();
   // live clock refresh -- never while the user is typing a zone search,
   // since render() rebuilds the DOM and would eat the keystrokes
