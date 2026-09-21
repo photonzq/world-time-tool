@@ -3,12 +3,16 @@
 A single-file time-zone comparison grid. Pick a set of zones, read across an
 hour axis, pin a moment and copy it out as a sentence.
 
+**[Live demo](https://photonzq.github.io/world-time-tool/)**
+
 Open `index.html` — that is the whole application. No build, no install, no
 network access, no dependencies.
 
 ## Running it
 
-Double-click `index.html`.
+Use the [live demo](https://photonzq.github.io/world-time-tool/), or download
+`index.html` and double-click it. It is the same file either way; nothing is
+fetched at runtime.
 
 To reach it from a phone on the same Wi-Fi, run `serve.bat`. It prints a LAN
 address to open:
@@ -134,9 +138,10 @@ days come out right.
 
 ## Tests
 
-Open `index.html?selftest=1`. It runs 122 assertions covering DST transitions,
-offset arithmetic, ISO weeks, the zone catalogue, the link codec and the
-clock-format logic, and prints a pass/fail table. Golden values were
+Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
+`index.html?selftest=1` locally. It runs 122 assertions covering DST
+transitions, offset arithmetic, ISO weeks, the zone catalogue, the link codec
+and the clock-format logic, and prints a pass/fail table. Golden values were
 cross-checked against an independent implementation.
 
 ## Browser support
