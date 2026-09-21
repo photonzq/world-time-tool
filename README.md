@@ -40,21 +40,35 @@ There are two hash forms, and both load.
 
 ### Packed — what you normally get
 
-    .../#5032CNE2K4J4Q0
+    .../#9PGV2E00GC8
 
-The whole state bit-packed and written in base 32 over `0-9A-V`: 3 bits of
-format version, then row count, home row, clock format, and two presence flags,
-then a 15-bit date (days from 2020-01-01, so 2020–2109), a 5-bit pinned column,
-and one 8-bit zone index per row. Four zones with a pin is 67 bits — 14
-characters.
+The whole state bit-packed and written in base 32 over `0-9A-V`, most
+significant bit first:
 
-Zone indices point into `ZONES`, the Windows time-zone list frozen as a literal
-in `index.html`. **That table is append-only.** Reordering it would silently
-repoint every link ever issued, so the self test checksums it. Indexing the
-merged 426-zone catalogue instead is not possible: it depends on what the
-browser's ICU reports, so the same code would mean different cities on
-different browsers. The ~287 zones outside the frozen table are simply not
-packable and fall back to the readable form.
+| field | bits | |
+|---|---|---|
+| version | 2 | |
+| row count | 4 | minus one, so 1–16 rows |
+| home flag | 1 | set when home is row 0, which it nearly always is; otherwise 4 more bits |
+| clock format | 2 | |
+| date / pin present | 1 + 1 | |
+| date | 14 | days from 2024-01-01, so 2024–2068 |
+| pinned column | 5 | |
+| each row | 6 or 9 | `0` + 5-bit rank for the 32 most-compared zones, else `1` + 8-bit `ZONES` index |
+
+Four common zones with a date and a pin is 54 bits — **11 characters**. Without
+a date or pin it is 7.
+
+Zone codes point into two literals frozen in `index.html`: `ZONES`, the Windows
+time-zone list, and `POP`, the 32 zones that get the short code. **Both are
+append-only** — reordering either silently repoints links that are already out
+there, so the self test checksums `ZONES` and asserts every `POP` entry
+resolves. Indexing the merged 426-zone catalogue instead is not possible: it
+depends on what the browser's ICU reports, so one code would mean different
+cities on different browsers.
+
+Anything that does not fit falls back to the readable form: a zone outside
+`ZONES` (about 287 of the 426), more than 16 rows, or a date outside 2024–2068.
 
 ### Readable — hand-editable, and what old links use
 
@@ -76,24 +90,32 @@ names one instant and would otherwise land on the wrong day.
 
 ### QR codes
 
-Length is what matters, and the packed form is 58 characters against 158 for
-the original encoding. Measured with a real encoder, at error correction M that
-is QR version 4 (33x33 modules) instead of version 9 (53x53) — 0.39x the area,
-so each module prints about 60% wider at the same physical size:
+Length is what sets the QR version, and the packed form is 55 characters
+against 158 for the first encoding. Measured with a real encoder at error
+correction M, that is version 4 (33x33 modules) instead of version 9 (53x53) —
+0.39x the area, so each module prints about 60% wider at the same physical
+size.
 
-| EC level | original, 158 ch | packed, 58 ch | area |
-|---|---|---|---|
-| L | v8 49x49 | v4 33x33 | 0.45x |
-| M | v9 53x53 | v4 33x33 | 0.39x |
-| Q | v11 61x61 | v5 37x37 | 0.37x |
-| H | v13 69x69 | v6 41x41 | 0.35x |
+Past that point **the fragment is no longer the constraint — the URL prefix
+is.** `https://photonzq.github.io/world-time-tool/#` is 44 of the 55
+characters, and shrinking the fragment to 8 still leaves version 4. What would
+actually help:
 
-The base-32 alphabet is deliberately inside QR's alphanumeric charset
+| URL | chars | version |
+|---|---|---|
+| current | 55 | v4 33x33 |
+| repo renamed to something short | 43 | v4 33x33 (misses v3 by 4 bits) |
+| served from a `photonzq.github.io` user site | 39 | v3 29x29 |
+| user site, state in the path, all uppercase | 38 | **v2 25x25** |
+
+The base-32 alphabet is deliberately inside the QR alphanumeric charset
 (`0-9 A-Z $%*+-./:` and space), which encodes at 5.5 bits per character rather
-than 8. At this URL that is a free property rather than the win: the lowercase
-host and path are 74% of the string and force byte mode anyway, and the 30 bits
-saved do not cross a version boundary. It would start to matter on a shorter
-host.
+than 8. That is free but unused today: the lowercase host and path force byte
+mode for the whole string. It only pays off in the last row above, where a user
+site has no case-sensitive path, the state moves out of the fragment into the
+path (`#` is not in the charset), and the entire URL can be uppercased — the
+host being case-insensitive. That needs a `404.html` to route the path, which
+is not implemented here.
 
 ## Design notes
 
@@ -112,7 +134,7 @@ days come out right.
 
 ## Tests
 
-Open `index.html?selftest=1`. It runs 115 assertions covering DST transitions,
+Open `index.html?selftest=1`. It runs 122 assertions covering DST transitions,
 offset arithmetic, ISO weeks, the zone catalogue, the link codec and the
 clock-format logic, and prints a pass/fail table. Golden values were
 cross-checked against an independent implementation.

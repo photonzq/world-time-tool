@@ -938,63 +938,83 @@ function selftest(){
   eq("ZONES is 139 entries",ZONES.length,139);
   eq("ZONES ids are unique",new Set(ZONES.map(z=>z[1])).size,139);
   eq("ZONES index fits in 8 bits",ZONES.length<=256,true);
-  // FROZEN: a change here breaks every packed link ever issued. Do not "fix"
-  // this number -- restore the table order instead.
+  // FROZEN: a change here repoints every packed link ever issued. Do not
+  // "fix" this number -- restore the table order instead.
   eq("ZONES order is frozen (FNV-1a over the ids)",(()=>{
       let h=2166136261>>>0; const j=ZONES.map(z=>z[1]).join("|");
       for(let i=0;i<j.length;i++){ h^=j.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
       return h; })(),4054465934);
   eq("frozen index: America/New_York",ZIDX["America/New_York"],21);
-  eq("frozen index: America/Los_Angeles",ZIDX["America/Los_Angeles"],9);
   eq("frozen index: Europe/Berlin",ZIDX["Europe/Berlin"],50);
-  eq("frozen index: Asia/Shanghai",ZIDX["Asia/Shanghai"],104);
+  eq("POP fits in 5 bits",POP.length<=32,true);
+  eq("POP entries are unique",new Set(POP).size,POP.length);
+  eq("every POP zone is in ZONES",POP.filter(z=>ZIDX[z]===undefined).length,0);
   eq("packed alphabet is QR-alphanumeric safe",
      B32.split("").every(c=>"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:".indexOf(c)>=0),true);
   {
     const S0=S, P0=pinned, W0=wantLong;
-    const trip=(rows,home,date,fmt,pin)=>{
+    const trip=(rows,home,date,fmt,pin,withLen)=>{
       S={rows:rows,home:home,date:date,fmt:fmt}; pinned=pin;
       const packed=packState();
       if(!packed) return "NOT-PACKABLE";
       const u=unpackState(packed);
       if(!u) return "DECODE-FAILED";
       return u.rows.join(",")+"|"+u.home+"|"+u.date.y+"-"+u.date.mo+"-"+u.date.d+
-             "|"+u.fmt+"|"+u.pin+"|len="+packed.length;
+             "|"+u.fmt+"|"+u.pin+(withLen?"|len="+packed.length:"");
     };
     const R=["America/New_York","America/Los_Angeles","Europe/Berlin","Asia/Shanghai"];
-    eq("packed round-trip: 4 zones, date, pin",
-       trip(R,"America/New_York",{y:2026,mo:11,d:1},"12",24),
-       R.join(",")+"|America/New_York|2026-11-1|12|24|len=14");
-    eq("packed round-trip: home is not row 0, mx format",
-       trip(R,"Asia/Shanghai",{y:2026,mo:9,d:21},"mx",3),
-       R.join(",")+"|Asia/Shanghai|2026-9-21|mx|3|len=14");
-    eq("packed round-trip: single zone, no pin",
-       trip(["Europe/Berlin"],"Europe/Berlin",{y:2026,mo:3,d:8},"24",null),
-       "Europe/Berlin|Europe/Berlin|2026-3-8|24|null|len=8");
-    eq("packed round-trip: 15 zones (the 4-bit maximum)",
-       trip(ZONES.slice(0,15).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0)
+    eq("packed: 4 popular zones, date, pin -> 11 chars",
+       trip(R,"America/New_York",{y:2026,mo:11,d:1},"12",24,1),
+       R.join(",")+"|America/New_York|2026-11-1|12|24|len=11");
+    eq("packed: no date, no pin -> 7 chars",
+       trip(R,"America/New_York",todayIn("America/New_York"),"12",null,1),
+       R.join(",")+"|America/New_York|"+(d=>d.y+"-"+d.mo+"-"+d.d)(todayIn("America/New_York"))+
+       "|12|null|len=7");
+    eq("packed: home is not row 0, mx format -> 12 chars",
+       trip(R,"Asia/Shanghai",{y:2026,mo:9,d:21},"mx",3,1),
+       R.join(",")+"|Asia/Shanghai|2026-9-21|mx|3|len=12");
+    const NP=["Asia/Kabul","Asia/Baku","Pacific/Fiji","Asia/Omsk"];
+    eq("none of those four are in POP",NP.filter(z=>PRANK[z]!==undefined).length,0);
+    eq("packed: 4 zones outside POP still pack, 3 chars wider",
+       trip(NP,"Asia/Kabul",{y:2026,mo:11,d:1},"12",24,1),
+       NP.join(",")+"|Asia/Kabul|2026-11-1|12|24|len=14");
+    eq("packed: 16 zones (the 4-bit maximum)",
+       trip(ZONES.slice(0,16).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0,0)
          .indexOf("NOT-PACKABLE"),-1);
-    eq("16 zones is not packable",
-       trip(ZONES.slice(0,16).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0),
+    eq("17 zones is not packable",
+       trip(ZONES.slice(0,17).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0,0),
        "NOT-PACKABLE");
     eq("a zone outside the frozen table is not packable",
-       trip(["Africa/Abidjan"],"Africa/Abidjan",{y:2026,mo:6,d:1},"12",0),"NOT-PACKABLE");
-    eq("a date before 2020 is not packable",
-       trip(R,"America/New_York",{y:2019,mo:6,d:1},"12",0),"NOT-PACKABLE");
+       trip(["Africa/Abidjan"],"Africa/Abidjan",{y:2026,mo:6,d:1},"12",0,0),"NOT-PACKABLE");
+    eq("a date before the 2024 epoch is not packable",
+       trip(R,"America/New_York",{y:2023,mo:12,d:31},"12",0,0),"NOT-PACKABLE");
+    eq("a date past 2068 is not packable",
+       trip(R,"America/New_York",{y:2069,mo:1,d:1},"12",0,0),"NOT-PACKABLE");
     eq("every frozen zone survives a packed round-trip",
-       ZONES.filter(z=>{
-         const t=trip([z[1]],z[1],{y:2026,mo:6,d:1},"12",7);
-         return t!==z[1]+"|"+z[1]+"|2026-6-1|12|7|len=9"; }).length,0);
+       ZONES.filter(z=>trip([z[1]],z[1],{y:2026,mo:6,d:1},"12",7,0)
+                       !==z[1]+"|"+z[1]+"|2026-6-1|12|7").length,0);
+    eq("every POP zone takes the 6-bit code (36 bits -> 8 chars)",
+       POP.filter(z=>{ S={rows:[z],home:z,date:{y:2026,mo:6,d:1},fmt:"12"}; pinned=7;
+                       return packState().length!==8; }).length,0);
+    eq("a plain ZONES zone takes the 9-bit code (39 bits -> 8 chars)",
+       (()=>{ S={rows:["Asia/Kabul"],home:"Asia/Kabul",date:{y:2026,mo:6,d:1},fmt:"12"};
+              pinned=7; return packState().length; })(),8);
     eq("every column 0..31 survives",
        (()=>{ for(let c=0;c<32;c++){
                 S={rows:R,home:R[0],date:{y:2026,mo:11,d:1},fmt:"12"}; pinned=c;
                 const u=unpackState(packState());
                 if(!u||u.pin!==c) return c; } return -1; })(),-1);
+    eq("every home row 0..15 survives",
+       (()=>{ const rows=ZONES.slice(0,16).map(z=>z[1]);
+              for(let i=0;i<16;i++){
+                S={rows:rows,home:rows[i],date:{y:2026,mo:6,d:1},fmt:"12"}; pinned=null;
+                const u=unpackState(packState());
+                if(!u||u.home!==rows[i]) return i; } return -1; })(),-1);
     S=S0; pinned=P0; wantLong=W0;
   }
   eq("unpackState rejects lowercase",unpackState("k3m9qx4b2"),null);
-  eq("unpackState rejects a bad version",unpackState("VVVVVVVVVVVVVV"),null);
-  eq("unpackState rejects truncation",unpackState("18"),null);
+  eq("unpackState rejects a bad version",unpackState("VVVVVVVVVVV"),null);
+  eq("unpackState rejects truncation",unpackState("58"),null);
   eq("unpackState rejects the readable form",unpackState("z=am.New_York"),null);
 
   // --- hash codec ---
@@ -1100,34 +1120,64 @@ function zUnpack(s){
    ZONES IS APPEND-ONLY. Reordering or removing an entry breaks every link ever
    issued. selftest() checksums it so that cannot happen by accident. */
 const B32="0123456789ABCDEFGHIJKLMNOPQRSTUV";
-const PEPOCH=Date.UTC(2020,0,1);
+const PEPOCH=Date.UTC(2024,0,1);
 const ZIDX={}; ZONES.forEach((z,i)=>{ if(ZIDX[z[1]]===undefined) ZIDX[z[1]]=i; });
 
+/* The 32 zones people actually compare, so the common row gets a 6-bit code
+   instead of 9. Rank order is what is encoded, so this list is APPEND-ONLY in
+   the same way ZONES is -- except that it may not grow past 32 (5 bits).
+   Membership is all that matters for correctness; the ordering within it is
+   only a guess at frequency and costs nothing if it is wrong. */
+const POP=["America/New_York","Europe/London","America/Los_Angeles","Europe/Berlin",
+"Asia/Shanghai","Asia/Tokyo","Asia/Calcutta","America/Chicago","Europe/Paris",
+"Asia/Singapore","Australia/Sydney","Asia/Dubai","Etc/UTC","America/Denver",
+"Asia/Seoul","Europe/Moscow","America/Sao_Paulo","Asia/Bangkok","Europe/Warsaw",
+"Europe/Bucharest","America/Mexico_City","Africa/Johannesburg","Pacific/Auckland",
+"Asia/Jerusalem","Asia/Karachi","Europe/Istanbul","America/Bogota","Asia/Taipei",
+"Australia/Perth","America/Buenos_Aires","Africa/Lagos","Africa/Cairo"];
+const PRANK={}; POP.forEach((z,i)=>{ if(PRANK[z]===undefined) PRANK[z]=i; });
+
+/* Layout, most-significant bit first:
+     ver   2   format version (=1)
+     n     4   row count - 1, so 1..16 rows
+     h0    1   1 = home is row 0 (almost always), else 4 more bits of row index
+     fmt   2   0=12h 1=24h 2=mx
+     fD fP 1+1 date and pin present
+     date 14   days from 2024-01-01, so 2024..2068        (only if fD)
+     pin   5   column index                               (only if fP)
+     rows      per row: 0 + 5 bits POP rank, or 1 + 8 bits ZONES index
+   Four popular zones with a date and a pin is 54 bits -- 11 characters. */
 function packState(){
   const n=S.rows.length;
-  if(n<1||n>15) return null;                       // 4-bit count
-  const idx=S.rows.map(z=>ZIDX[z]);
-  if(idx.some(i=>i===undefined)) return null;      // a zone outside the frozen table
+  if(n<1||n>16) return null;
   const t0=todayIn(S.home);
   const hasD=pinned!==null||S.date.y!==t0.y||S.date.mo!==t0.mo||S.date.d!==t0.d;
   let days=0;
   if(hasD){
     days=Math.round((Date.UTC(S.date.y,S.date.mo-1,S.date.d)-PEPOCH)/86400000);
-    if(days<0||days>32767) return null;            // outside 2020..2109
+    if(days<0||days>16383) return null;
   }
+  if(pinned!==null&&(pinned<0||pinned>31)) return null;
   let b="";
   const put=(v,w)=>{ b+=v.toString(2).padStart(w,"0"); };
-  put(1,3);                                        // format version
-  put(n,4);
-  put(Math.max(0,S.rows.indexOf(S.home)),4);       // home as a row index, not a zone
+  put(1,2);
+  put(n-1,4);
+  const hi=S.rows.indexOf(S.home);
+  if(hi<=0) put(1,1); else { put(0,1); put(hi,4); }
   put(S.fmt==="24"?1:S.fmt==="mx"?2:0,2);
   put(hasD?1:0,1); put(pinned!==null?1:0,1);
-  if(hasD) put(days,15);
-  if(pinned!==null){ if(pinned>31) return null; put(pinned,5); }
-  for(const i of idx) put(i,8);
+  if(hasD) put(days,14);
+  if(pinned!==null) put(pinned,5);
+  for(const z of S.rows){
+    const r=PRANK[z];
+    if(r!==undefined){ put(0,1); put(r,5); continue; }
+    const i=ZIDX[z];
+    if(i===undefined) return null;          // outside the frozen table
+    put(1,1); put(i,8);
+  }
   let out="";
   for(let i=0;i<b.length;i+=5) out+=B32[parseInt((b.slice(i,i+5)+"0000").slice(0,5),2)];
-  return out;                                      // trailing pad bits are never read
+  return out;                               // trailing pad bits are never read
 }
 function unpackState(str){
   if(!/^[0-9A-V]{2,}$/.test(str)) return null;
@@ -1136,16 +1186,23 @@ function unpackState(str){
   let p=0;
   const get=w=>{ if(p+w>b.length) throw 0; const v=parseInt(b.slice(p,p+w),2); p+=w; return v; };
   try{
-    if(get(3)!==1) return null;
-    const n=get(4); if(n<1) return null;
-    const hi=get(4), fm=get(2), hasD=get(1), hasP=get(1);
+    if(get(2)!==1) return null;
+    const n=get(4)+1;
+    const hi=get(1)?0:get(4);               // the ternary skips get(4) when h0 is set
+    const fm=get(2), hasD=get(1), hasP=get(1);
     let date=null, pin=null;
-    if(hasD){ const dt=new Date(PEPOCH+get(15)*86400000);
+    if(hasD){ const dt=new Date(PEPOCH+get(14)*86400000);
               date={y:dt.getUTCFullYear(),mo:dt.getUTCMonth()+1,d:dt.getUTCDate()}; }
     if(hasP) pin=get(5);
     const raw=[];
-    for(let i=0;i<n;i++){ const z=ZONES[get(8)]; if(!z) return null; raw.push(z[1]); }
-    const home=raw[Math.min(hi,raw.length-1)];     // resolve before dedup shifts indices
+    for(let i=0;i<n;i++){
+      let z;
+      if(get(1)===0) z=POP[get(5)];
+      else { const e=ZONES[get(8)]; z=e&&e[1]; }
+      if(!z) return null;
+      raw.push(z);
+    }
+    const home=raw[Math.min(hi,raw.length-1)];   // resolve before dedup shifts indices
     return {home:home,rows:[...new Set(raw)],date:date||todayIn(home),
             fmt:["12","24","mx"][fm]||"12",pin:pin};
   }catch(e){ return null; }
