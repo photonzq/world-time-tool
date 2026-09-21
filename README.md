@@ -35,20 +35,65 @@ both of which are restricted on `file://`.
 
 ## Links
 
-**Link** copies the current view, including the pinned column if one is set:
+**Link** copies the current view, including the pinned column if one is set.
+There are two hash forms, and both load.
+
+### Packed — what you normally get
+
+    .../#5032CNE2K4J4Q0
+
+The whole state bit-packed and written in base 32 over `0-9A-V`: 3 bits of
+format version, then row count, home row, clock format, and two presence flags,
+then a 15-bit date (days from 2020-01-01, so 2020–2109), a 5-bit pinned column,
+and one 8-bit zone index per row. Four zones with a pin is 67 bits — 14
+characters.
+
+Zone indices point into `ZONES`, the Windows time-zone list frozen as a literal
+in `index.html`. **That table is append-only.** Reordering it would silently
+repoint every link ever issued, so the self test checksums it. Indexing the
+merged 426-zone catalogue instead is not possible: it depends on what the
+browser's ICU reports, so the same code would mean different cities on
+different browsers. The ~287 zones outside the frozen table are simply not
+packable and fall back to the readable form.
+
+### Readable — hand-editable, and what old links use
 
     .../#z=am.New_York,am.Los_Angeles,eu.Berlin,as.Shanghai&d=20260921&p=14
 
 `z` is the rows, `h` the home zone when it is not the first row, `d` the date,
 `t` the clock format, `p` the pinned column. IANA area prefixes fold to two
-letters (`am.` = `America/`), and the fragment carries `/` and `,` unescaped,
-which together roughly halve the length.
+letters (`am.` = `America/`), and the fragment carries `/` and `,` unescaped.
 
-Omitted keys take their default, so a link with no `d` always opens on today —
-useful for a bookmark. Pinning forces `d` to be written, because a pin names one
-instant and would otherwise land on the wrong day. Links written by earlier
-versions, with percent-encoded full zone names, still load and are rewritten to
-the short form.
+Arriving on a readable link keeps writing readable ones, so hand-editing does
+not turn opaque the moment it is applied. Links written before this encoding
+existed, with percent-encoded full zone names, still load.
+
+### Rules that apply to both
+
+Omitted keys take their default, so a link with no date always opens on today —
+useful for a bookmark. Pinning forces the date to be written, because a pin
+names one instant and would otherwise land on the wrong day.
+
+### QR codes
+
+Length is what matters, and the packed form is 58 characters against 158 for
+the original encoding. Measured with a real encoder, at error correction M that
+is QR version 4 (33x33 modules) instead of version 9 (53x53) — 0.39x the area,
+so each module prints about 60% wider at the same physical size:
+
+| EC level | original, 158 ch | packed, 58 ch | area |
+|---|---|---|---|
+| L | v8 49x49 | v4 33x33 | 0.45x |
+| M | v9 53x53 | v4 33x33 | 0.39x |
+| Q | v11 61x61 | v5 37x37 | 0.37x |
+| H | v13 69x69 | v6 41x41 | 0.35x |
+
+The base-32 alphabet is deliberately inside QR's alphanumeric charset
+(`0-9 A-Z $%*+-./:` and space), which encodes at 5.5 bits per character rather
+than 8. At this URL that is a free property rather than the win: the lowercase
+host and path are 74% of the string and force byte mode anyway, and the 30 bits
+saved do not cross a version boundary. It would start to matter on a shorter
+host.
 
 ## Design notes
 
@@ -67,7 +112,7 @@ days come out right.
 
 ## Tests
 
-Open `index.html?selftest=1`. It runs 93 assertions covering DST transitions,
+Open `index.html?selftest=1`. It runs 115 assertions covering DST transitions,
 offset arithmetic, ISO weeks, the zone catalogue, the link codec and the
 clock-format logic, and prints a pass/fail table. Golden values were
 cross-checked against an independent implementation.

@@ -934,6 +934,69 @@ function selftest(){
                  z[2].indexOf("cest")>=0).length,1);
   eq("synthLabel handles nested ids",
      synthLabel("America/Argentina/Catamarca").indexOf("Catamarca, Argentina")>0,true);
+  // --- packed hash ---
+  eq("ZONES is 139 entries",ZONES.length,139);
+  eq("ZONES ids are unique",new Set(ZONES.map(z=>z[1])).size,139);
+  eq("ZONES index fits in 8 bits",ZONES.length<=256,true);
+  // FROZEN: a change here breaks every packed link ever issued. Do not "fix"
+  // this number -- restore the table order instead.
+  eq("ZONES order is frozen (FNV-1a over the ids)",(()=>{
+      let h=2166136261>>>0; const j=ZONES.map(z=>z[1]).join("|");
+      for(let i=0;i<j.length;i++){ h^=j.charCodeAt(i); h=Math.imul(h,16777619)>>>0; }
+      return h; })(),4054465934);
+  eq("frozen index: America/New_York",ZIDX["America/New_York"],21);
+  eq("frozen index: America/Los_Angeles",ZIDX["America/Los_Angeles"],9);
+  eq("frozen index: Europe/Berlin",ZIDX["Europe/Berlin"],50);
+  eq("frozen index: Asia/Shanghai",ZIDX["Asia/Shanghai"],104);
+  eq("packed alphabet is QR-alphanumeric safe",
+     B32.split("").every(c=>"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ $%*+-./:".indexOf(c)>=0),true);
+  {
+    const S0=S, P0=pinned, W0=wantLong;
+    const trip=(rows,home,date,fmt,pin)=>{
+      S={rows:rows,home:home,date:date,fmt:fmt}; pinned=pin;
+      const packed=packState();
+      if(!packed) return "NOT-PACKABLE";
+      const u=unpackState(packed);
+      if(!u) return "DECODE-FAILED";
+      return u.rows.join(",")+"|"+u.home+"|"+u.date.y+"-"+u.date.mo+"-"+u.date.d+
+             "|"+u.fmt+"|"+u.pin+"|len="+packed.length;
+    };
+    const R=["America/New_York","America/Los_Angeles","Europe/Berlin","Asia/Shanghai"];
+    eq("packed round-trip: 4 zones, date, pin",
+       trip(R,"America/New_York",{y:2026,mo:11,d:1},"12",24),
+       R.join(",")+"|America/New_York|2026-11-1|12|24|len=14");
+    eq("packed round-trip: home is not row 0, mx format",
+       trip(R,"Asia/Shanghai",{y:2026,mo:9,d:21},"mx",3),
+       R.join(",")+"|Asia/Shanghai|2026-9-21|mx|3|len=14");
+    eq("packed round-trip: single zone, no pin",
+       trip(["Europe/Berlin"],"Europe/Berlin",{y:2026,mo:3,d:8},"24",null),
+       "Europe/Berlin|Europe/Berlin|2026-3-8|24|null|len=8");
+    eq("packed round-trip: 15 zones (the 4-bit maximum)",
+       trip(ZONES.slice(0,15).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0)
+         .indexOf("NOT-PACKABLE"),-1);
+    eq("16 zones is not packable",
+       trip(ZONES.slice(0,16).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0),
+       "NOT-PACKABLE");
+    eq("a zone outside the frozen table is not packable",
+       trip(["Africa/Abidjan"],"Africa/Abidjan",{y:2026,mo:6,d:1},"12",0),"NOT-PACKABLE");
+    eq("a date before 2020 is not packable",
+       trip(R,"America/New_York",{y:2019,mo:6,d:1},"12",0),"NOT-PACKABLE");
+    eq("every frozen zone survives a packed round-trip",
+       ZONES.filter(z=>{
+         const t=trip([z[1]],z[1],{y:2026,mo:6,d:1},"12",7);
+         return t!==z[1]+"|"+z[1]+"|2026-6-1|12|7|len=9"; }).length,0);
+    eq("every column 0..31 survives",
+       (()=>{ for(let c=0;c<32;c++){
+                S={rows:R,home:R[0],date:{y:2026,mo:11,d:1},fmt:"12"}; pinned=c;
+                const u=unpackState(packState());
+                if(!u||u.pin!==c) return c; } return -1; })(),-1);
+    S=S0; pinned=P0; wantLong=W0;
+  }
+  eq("unpackState rejects lowercase",unpackState("k3m9qx4b2"),null);
+  eq("unpackState rejects a bad version",unpackState("VVVVVVVVVVVVVV"),null);
+  eq("unpackState rejects truncation",unpackState("18"),null);
+  eq("unpackState rejects the readable form",unpackState("z=am.New_York"),null);
+
   // --- hash codec ---
   const rt=z=>zUnpack(zPack(z));
   eq("zPack round-trip America/New_York",rt("America/New_York"),"America/New_York");
@@ -1020,6 +1083,74 @@ function zUnpack(s){
   const i=s.indexOf("."), a=i<0?null:AREA[s.slice(0,i)];
   return a?a+"/"+s.slice(i+1):s;
 }
+/* ---------- packed hash ----------
+   The readable form above is still ~60 characters, most of it city names. For
+   a QR code that matters twice over: fewer characters, and -- because this
+   alphabet is a subset of the QR alphanumeric charset (0-9 A-Z and a few
+   symbols) -- the fragment encodes at 5.5 bits per character instead of the 8
+   that any lowercase letter would force.
+
+   The whole state is bit-packed and written in base 32 over 0-9A-V. Zones are
+   8-bit indices into ZONES, a frozen literal in this file, so a code means the
+   same thing forever. Zones outside it (ICU knows about 3x more than the
+   Windows list) are not packable and fall back to the readable form -- an
+   index into the merged catalogue would differ between browsers and silently
+   decode to the wrong city.
+
+   ZONES IS APPEND-ONLY. Reordering or removing an entry breaks every link ever
+   issued. selftest() checksums it so that cannot happen by accident. */
+const B32="0123456789ABCDEFGHIJKLMNOPQRSTUV";
+const PEPOCH=Date.UTC(2020,0,1);
+const ZIDX={}; ZONES.forEach((z,i)=>{ if(ZIDX[z[1]]===undefined) ZIDX[z[1]]=i; });
+
+function packState(){
+  const n=S.rows.length;
+  if(n<1||n>15) return null;                       // 4-bit count
+  const idx=S.rows.map(z=>ZIDX[z]);
+  if(idx.some(i=>i===undefined)) return null;      // a zone outside the frozen table
+  const t0=todayIn(S.home);
+  const hasD=pinned!==null||S.date.y!==t0.y||S.date.mo!==t0.mo||S.date.d!==t0.d;
+  let days=0;
+  if(hasD){
+    days=Math.round((Date.UTC(S.date.y,S.date.mo-1,S.date.d)-PEPOCH)/86400000);
+    if(days<0||days>32767) return null;            // outside 2020..2109
+  }
+  let b="";
+  const put=(v,w)=>{ b+=v.toString(2).padStart(w,"0"); };
+  put(1,3);                                        // format version
+  put(n,4);
+  put(Math.max(0,S.rows.indexOf(S.home)),4);       // home as a row index, not a zone
+  put(S.fmt==="24"?1:S.fmt==="mx"?2:0,2);
+  put(hasD?1:0,1); put(pinned!==null?1:0,1);
+  if(hasD) put(days,15);
+  if(pinned!==null){ if(pinned>31) return null; put(pinned,5); }
+  for(const i of idx) put(i,8);
+  let out="";
+  for(let i=0;i<b.length;i+=5) out+=B32[parseInt((b.slice(i,i+5)+"0000").slice(0,5),2)];
+  return out;                                      // trailing pad bits are never read
+}
+function unpackState(str){
+  if(!/^[0-9A-V]{2,}$/.test(str)) return null;
+  let b="";
+  for(const ch of str) b+=B32.indexOf(ch).toString(2).padStart(5,"0");
+  let p=0;
+  const get=w=>{ if(p+w>b.length) throw 0; const v=parseInt(b.slice(p,p+w),2); p+=w; return v; };
+  try{
+    if(get(3)!==1) return null;
+    const n=get(4); if(n<1) return null;
+    const hi=get(4), fm=get(2), hasD=get(1), hasP=get(1);
+    let date=null, pin=null;
+    if(hasD){ const dt=new Date(PEPOCH+get(15)*86400000);
+              date={y:dt.getUTCFullYear(),mo:dt.getUTCMonth()+1,d:dt.getUTCDate()}; }
+    if(hasP) pin=get(5);
+    const raw=[];
+    for(let i=0;i<n;i++){ const z=ZONES[get(8)]; if(!z) return null; raw.push(z[1]); }
+    const home=raw[Math.min(hi,raw.length-1)];     // resolve before dedup shifts indices
+    return {home:home,rows:[...new Set(raw)],date:date||todayIn(home),
+            fmt:["12","24","mx"][fm]||"12",pin:pin};
+  }catch(e){ return null; }
+}
+
 function dPack(D){ return ""+D.y+pad(D.mo)+pad(D.d); }
 function dUnpack(s){                              // 20260921, or the older 2026-09-21
   let y,mo,d;
@@ -1047,9 +1178,17 @@ function defaultState(){
   return {home,rows,date:todayIn(home),fmt:"12"};
 }
 const FMTS={"12":1,"24":1,"mx":1};
+/* Whichever form the link arrived in is the form we keep writing, so a
+   hand-edited readable hash does not turn opaque the moment it is applied. */
+let wantLong=false;
 function loadState(){
   const h=location.hash.slice(1);
+  if(h&&h.indexOf("=")<0){
+    const u=unpackState(h);
+    if(u){ pinned=u.pin; return {home:u.home,rows:u.rows,date:u.date,fmt:u.fmt}; }
+  }
   if(h){
+    wantLong=true;
     try{
       const q=parseHash(h);
       const rows=[...new Set((q.z||"").split(",").filter(Boolean).map(zUnpack))];
@@ -1073,6 +1212,8 @@ function saveState(){
   // keep home consistent with the visible rows after any mutation
   if(S.rows.length&&!S.rows.includes(S.home)) S.home=S.rows[0];
   try{ localStorage.setItem(LS,JSON.stringify(S)); }catch(e){}
+  const packed=wantLong?null:packState();
+  if(packed){ history.replaceState(null,"","#"+packed); return; }
   const P=["z="+S.rows.map(zPack).join(",")];
   if(S.home!==S.rows[0]) P.push("h="+zPack(S.home));
   /* A dateless link means "today", which is what you want from a bookmark --
