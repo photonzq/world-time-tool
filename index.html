@@ -1531,26 +1531,43 @@ function selftest(){
       const L="DESCRIPTION:"+"\u00e9\u2013x".repeat(40);
       return foldIcs(L).replace(/\r\n /g,"")===L; })(),true);
 
-  // --- DST drift (9:00 New York, weekly, 8 weeks from Tue 22 Sep 2026) ---
+  // --- DST drift: only a change during the meeting, or within 3 days after ---
   {
-    const S0=S;
-    S={rows:["America/New_York","Europe/Berlin","Australia/Sydney","America/Chicago",
-             "America/Phoenix"],home:"America/New_York",date:{y:2026,mo:9,d:22},fmt:"12"};
-    _driftKey="";
-    const d=driftNotes(zonedToInstant(2026,9,22,9,0,"America/New_York").instant);
-    const of=c=>d.find(x=>x.indexOf(c+":")===0);
-    eq("drift: Berlin, one week in late October",of("Berlin"),
+    const S0=S, ny="America/New_York";
+    S={rows:[ny,"Europe/Berlin","Australia/Sydney","America/Chicago","America/Phoenix",
+             "America/Havana"],home:ny,date:{y:2026,mo:9,d:22},fmt:"12"};
+    const at=(y,m,d,h,mi)=>zonedToInstant(y,m,d,h,mi,ny).instant;
+    const notes=(t0,len)=>{ _driftKey=""; return driftNotes(t0,t0+len*60000); };
+    const of=(d,c)=>d.find(x=>x.indexOf(c+":")===0);
+    eq("drift: nothing within 3 days of Tue 22 Sep, so no notes at all",
+       notes(at(2026,9,22,9,0),60).length,0);
+    eq("drift: 3 days before Europe's change, Berlin is noted",
+       of(notes(at(2026,10,22,9,0),60),"Berlin"),
        "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week");
-    eq("drift: Sydney changes twice",of("Sydney"),
+    eq("drift: 4 days before, it is not",of(notes(at(2026,10,21,9,0),60),"Berlin"),undefined);
+    eq("drift: a change during the meeting says when, in home time",
+       of(notes(at(2026,10,24,20,0),180),"Berlin"),
+       "Berlin: gap to New York drops to 5 h during the meeting, at 9:00 PM New York time");
+    eq("drift: Sydney, two changes in a row",of(notes(at(2026,10,2,9,0),60),"Sydney"),
        "Sydney: gap to New York rises to 15 h from Sun 4 Oct, then 16 h from Sun 1 Nov");
-    eq("drift: Phoenix, which keeps no DST",of("Phoenix"),
-       "Phoenix: gap to New York drops to 2 h from Sun 1 Nov");
-    eq("drift: Chicago moves with New York, no note",of("Chicago"),undefined);
-    _driftKey="";
-    eq("drift: March gives the three-week window",
-       driftNotes(zonedToInstant(2026,3,2,9,0,"America/New_York").instant)
-         .find(x=>x.indexOf("Berlin:")===0),
+    eq("drift: March, the three-week window",of(notes(at(2026,3,5,9,0),60),"Berlin"),
        "Berlin: gap to New York drops to 5 h from Sun 8 Mar, for 3 weeks");
+    eq("drift: Phoenix, which keeps no DST of its own",
+       of(notes(at(2026,10,29,9,0),60),"Phoenix"),
+       "Phoenix: gap to New York drops to 2 h from Sun 1 Nov");
+    // Havana changes two hours before New York in March, Chicago an hour after
+    // it in November: real flips, but overnight and gone by morning
+    eq("drift: an overnight flip after the meeting is not news (Havana)",
+       of(notes(at(2026,3,6,9,0),60),"Havana"),undefined);
+    eq("drift: nor the hour New York and Chicago agree in November",
+       of(notes(at(2026,10,29,9,0),60),"Chicago"),undefined);
+    eq("drift: but inside the meeting it is, with how long it lasts",
+       of(notes(at(2026,3,7,23,0),240),"Havana"),
+       "Havana: gap to New York rises to 1 h during the meeting, at 12:00 AM New York time, "+
+       "for 2 hours");
+    eq("durWords: hours under a day, then days or weeks",
+       [3600000,2*3600000,7.2*86400000,8*86400000,20.75*86400000].map(durWords).join(" | "),
+       "one hour | 2 hours | one week | 8 days | 3 weeks");
     S=S0; _driftKey="";
   }
   eq("gapWords: whole, half and quarter hours",
@@ -1790,11 +1807,16 @@ function canShare(){
 }
 
 /* ---------- DST drift ----------
-   A recurring meeting stays fixed in the home clock, so every week it lands
-   at the same home time. Where another zone changes its clocks on a different
-   date, the gap between the two moves -- for three weeks in March and one in
-   October/November between New York and Europe. Walk the next 8 weeks a day
-   at a time at the pinned home time and describe each zone's changes. */
+   A recurring meeting stays fixed in the home clock, so where another zone
+   changes its clocks on a different date the gap between them moves -- for
+   three weeks in March and one in October/November between New York and
+   Europe. Only worth saying when it bears on this meeting: a change during
+   the pinned meeting, or in the three days after it ends. A change five weeks
+   out is not news today, and saying it on every pin was just noise.
+   The moment is found exactly -- an hourly scan, then bisection to the
+   minute -- because "within three days" has to be judged on the real instant,
+   not on one sample a day. */
+const DRIFT_SOON=3*86400000;
 let _driftKey="", _driftVal=[];
 function gapWords(m){
   const a=Math.abs(m), h=Math.floor(a/60), r=a%60;
@@ -1803,31 +1825,74 @@ function gapWords(m){
 function spanWords(d){
   return d%7===0?(d===7?"one week":d/7+" weeks"):(d===1?"one day":d+" days");
 }
-function driftNotes(t0){
-  const key=S.home+"|"+S.rows.join(",")+"|"+t0;
-  if(key===_driftKey) return _driftVal;
-  const hw=wall(t0,S.home), days=[];
-  for(let k=0;k<=56;k++){
-    const dt=addDays({y:hw.y,mo:hw.mo,d:hw.d},k);
-    const t=zonedToInstant(dt.y,dt.mo,dt.d,hw.h,hw.mi,S.home).instant;
-    days.push({dt:dt,t:t,ho:offsetAt(t,S.home)});
+function durWords(ms){                       // under a day in hours, else days/weeks
+  const h=Math.round(ms/3600000);
+  return h<24?(h===1?"one hour":h+" hours"):spanWords(Math.round(ms/86400000));
+}
+function gapAt(t,tz){ return offsetAt(t,tz)-offsetAt(t,S.home); }
+/* The first minute in (from, to] at which tz's gap to home differs from its
+   gap at `from`, or null. Hourly steps are safe: a gap can flip back within
+   hours -- Havana moves two hours before New York in March -- but no zone
+   changes twice within one. */
+function nextGapChange(from,to,tz){
+  const g0=gapAt(from,tz);
+  for(let lo=from;lo<to;){
+    const hi=Math.min(lo+3600000,to);
+    if(gapAt(hi,tz)!==g0){
+      let a=lo, b=hi;
+      while(b-a>60000){
+        const m=a+Math.max(1,Math.floor((b-a)/120000))*60000;
+        if(gapAt(m,tz)===g0) a=m; else b=m;
+      }
+      return b;
+    }
+    lo=hi;
   }
-  const notes=[];
+  return null;
+}
+/* A change is dated in the calendar of the zone whose clocks moved: Europe's
+   autumn change is "Sun 25 Oct" to everyone, though New York is still on
+   Saturday evening when it happens. */
+function changeDay(c,tz){
+  return dayWords(wall(c,offsetAt(c-60000,tz)!==offsetAt(c,tz)?tz:S.home));
+}
+/* ...and timed as people state it: New York falls back "at 2:00 AM", not at
+   the 1:00 AM it becomes. */
+function changeClock(c,tz){
+  const w=wall(c-60000,tz); let h=w.h, mi=w.mi+1;
+  if(mi===60){ mi=0; h=(h+1)%24; }
+  return clockWords({h:h,mi:mi},uses24(tz));
+}
+/* Zones in one country do not change at one instant: each moves at 2 AM
+   local, so New York and Chicago show the same time for an hour every
+   November night. A flip that comes back within a day is only news when it
+   lands inside the meeting; after it, it is skipped and the scan goes on. */
+function driftNotes(t0,t1){
+  const key=S.home+"|"+S.rows.join(",")+"|"+t0+"|"+t1;
+  if(key===_driftKey) return _driftVal;
+  const notes=[], end=t1+DRIFT_SOON;
   for(const tz of S.rows){
     if(tz===S.home) continue;
-    const g=days.map(d=>offsetAt(d.t,tz)-d.ho), ch=[];
-    for(let k=1;k<g.length;k++) if(g[k]!==g[k-1]) ch.push(k);
-    if(!ch.length) continue;
-    const k1=ch[0];
-    let t=cityOf(tz)+": gap to "+cityOf(S.home)+" "+
-      (Math.abs(g[k1])<Math.abs(g[0])?"drops":"rises")+" to "+gapWords(g[k1])+
-      " from "+dayWords(days[k1].dt);
-    if(ch.length>1){
-      const k2=ch[1];
-      t+=g[k2]===g[0]?", for "+spanWords(k2-k1)
-                     :", then "+gapWords(g[k2])+" from "+dayWords(days[k2].dt);
+    const g0=gapAt(t0,tz);
+    for(let from=t0;;){
+      const c=nextGapChange(from,end,tz);
+      if(c===null) break;                            // nothing soon: say nothing
+      const g1=gapAt(c,tz), c2=nextGapChange(c,c+56*86400000,tz),
+            g2=c2===null?null:gapAt(c2,tz), brief=c2!==null&&g2===g0&&c2-c<86400000;
+      if(c>=t1&&brief){ from=c2; continue; }         // an overnight flip, after the meeting
+      let t=cityOf(tz)+": gap to "+cityOf(S.home)+" "+
+        (Math.abs(g1)<Math.abs(g0)?"drops":"rises")+" to "+gapWords(g1);
+      if(c<t1){
+        t+=" during the meeting, at "+changeClock(c,S.home)+" "+cityOf(S.home)+" time"+
+          (brief?", for "+durWords(c2-c):"");
+      }else{
+        t+=" from "+changeDay(c,tz);
+        if(c2!==null)
+          t+=g2===g0?", for "+durWords(c2-c):", then "+gapWords(g2)+" from "+changeDay(c2,tz);
+      }
+      notes.push(t);
+      break;
     }
-    notes.push(t);
   }
   _driftKey=key; _driftVal=notes;
   return notes;
@@ -2358,7 +2423,7 @@ function render(){
     const t0=instants[pinned]+pinMin*60000, t1=t0+pinLen*60000;
     const hw=wall(t0,S.home);
     pinSpan={t0:t0,t1:t1};
-    const drift=driftNotes(t0);
+    const drift=driftNotes(t0,t1);
     const seg=(k,vals,cur,lab,tip)=>'<span class="pseg" data-k="'+k+'" title="'+tip+'">'+
       vals.map(v=>'<button'+(v===cur?' class="on"':"")+' data-v="'+v+'">'+lab(v)+
         '</button>').join("")+'</span>';
@@ -2397,7 +2462,7 @@ function render(){
           (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
           (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
       }).join("")+'</div>'+
-      (drift.length?'<div class="drift" title="The pinned time repeated weekly, over the next 8 weeks">'+
+      (drift.length?'<div class="drift" title="A clock change during this meeting, or in the three days after it">'+
         drift.slice(0,3).map(x=>'<div>&#9888; '+esc(x)+'</div>').join("")+
         (drift.length>3?'<div>&hellip; and '+(drift.length-3)+' more</div>':"")+'</div>':"")+
       '<div class="pinsent"><span id="psText">'+pinSentence(t0,t1)+'</span>'+

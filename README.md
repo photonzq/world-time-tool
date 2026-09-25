@@ -69,9 +69,15 @@ both of which are restricted on `file://`.
   beats asking someone to join at midnight.
 - **DST drift warnings.** A recurring meeting stays fixed in the home clock,
   and when another zone changes its clocks on a different date, the gap moves.
-  If that happens within 8 weeks of the pinned date, the bar says when and for
-  how long ("Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one
-  week").
+  The bar only says so when it bears on this meeting — a change *during* it,
+  or in the three days after it ends:
+  - "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week"
+  - "Berlin: gap to New York drops to 5 h during the meeting, at 9:00 PM New
+    York time"
+
+  Zones in one country change at 2 AM local, not at one instant, so New York
+  and Chicago agree for an hour every November night. Flips like that are
+  only mentioned when they fall inside the meeting.
 - **Keyboard:** `←` `→` move the pin, `[` `]` change day, `T` today, `/` search,
   `C` copy the sentence, `Esc` clear the pin.
 - **Reorder and undo.** Drag the ▲ on desktop, or press and hold a row on a
@@ -191,7 +197,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 240 assertions, covering:
+`index.html?selftest=1` locally. It runs 246 assertions, covering:
 - DST transitions, offset arithmetic, ISO weeks
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length
