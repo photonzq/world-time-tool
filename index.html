@@ -1294,6 +1294,39 @@ function selftest(){
       return bad.join(","); })(),"");
   eq("canonTZ is total (never returns empty)",
      ZONES.filter(z=>!canonTZ(z[1])).length,0);
+
+  // --- default clock format: the convention where the computer is ---
+  eq("fmtFor: New York writes 12h",fmtFor("America/New_York"),"12");
+  eq("fmtFor: Zurich, Berlin and Tokyo write 24h",
+     ["Europe/Zurich","Europe/Berlin","Asia/Tokyo"].map(fmtFor).join(","),"24,24,24");
+  eq("fmtFor: India writes 12h under either spelling",
+     fmtFor("Asia/Calcutta")+","+fmtFor("Asia/Kolkata"),"12,12");
+  eq("localFmt follows this computer's zone (or its language, without region data)",
+     localFmt(),H12ZONES&&H12ZONES.size?fmtFor(detectHome()):localeFmt());
+  eq("a fresh state starts in the local convention",defaultState().fmt,localFmt());
+  {
+    const S0=S,P0=pinned,M0=pinMin,L0=pinLen;
+    S={rows:["America/New_York","Europe/Berlin"],home:"America/New_York",
+       date:{y:2026,mo:10,d:15},fmt:"24"}; pinned=9; pinMin=0; pinLen=60;
+    const a24=packState(); S.fmt="mx"; const amx=packState(); S.fmt="12"; const a12=packState();
+    eq("links carry no clock format: 24h, MX and am/pm views give one link",
+       a24===amx&&amx===a12,true);
+    S.fmt="24";
+    eq("the readable form writes no t= either",/(^|&)t=/.test(readableHash()),false);
+    S=S0; pinned=P0; pinMin=M0; pinLen=L0;
+  }
+  // viewerFmt reads this origin's saved state, so put it back afterwards
+  (()=>{
+    let saved; try{ saved=localStorage.getItem(LS); }catch(e){ return; }   // no storage: skip
+    try{
+      localStorage.setItem(LS,JSON.stringify({rows:["UTC"],home:"UTC",
+        date:{y:2026,mo:1,d:1},fmt:"mx"}));
+      eq("a link opens in the viewer's own last choice",viewerFmt(),"mx");
+      localStorage.removeItem(LS);
+      eq("a first-time viewer gets the local convention",viewerFmt(),localFmt());
+    }catch(e){}
+    finally{ try{ saved===null?localStorage.removeItem(LS):localStorage.setItem(LS,saved); }catch(e){} }
+  })();
   eq("hhmm 24h",hhmm({h:5,mi:42},true),"05:42");
   eq("hhmm 12h",hhmm({h:16,mi:42},false),"4:42p");
   eq("hhmm midnight 12h",hhmm({h:0,mi:5},false),"12:05a");
@@ -1667,24 +1700,24 @@ function selftest(){
       const u=unpackState(packed);
       if(!u) return "DECODE-FAILED";
       return u.rows.join(",")+"|"+u.home+"|"+u.date.y+"-"+u.date.mo+"-"+u.date.d+
-             "|"+u.fmt+"|"+u.pin+(withLen?"|len="+packed.length:"");
+             "|"+u.pin+(withLen?"|len="+packed.length:"");
     };
     const R=["America/New_York","America/Los_Angeles","Europe/Berlin","Asia/Shanghai"];
     eq("packed: 4 popular zones, date, pin -> 11 chars",
        trip(R,"America/New_York",{y:2026,mo:11,d:1},"12",24,1),
-       R.join(",")+"|America/New_York|2026-11-1|12|24|len=11");
+       R.join(",")+"|America/New_York|2026-11-1|24|len=11");
     eq("packed: no date, no pin -> 7 chars",
        trip(R,"America/New_York",todayIn("America/New_York"),"12",null,1),
        R.join(",")+"|America/New_York|"+(d=>d.y+"-"+d.mo+"-"+d.d)(todayIn("America/New_York"))+
-       "|12|null|len=7");
-    eq("packed: home is not row 0, mx format -> 12 chars",
+       "|null|len=7");
+    eq("packed: home is not row 0 -> 12 chars",
        trip(R,"Asia/Shanghai",{y:2026,mo:9,d:21},"mx",3,1),
-       R.join(",")+"|Asia/Shanghai|2026-9-21|mx|3|len=12");
+       R.join(",")+"|Asia/Shanghai|2026-9-21|3|len=12");
     const NP=["Asia/Kabul","Asia/Baku","Pacific/Fiji","Asia/Omsk"];
     eq("none of those four are in POP",NP.filter(z=>PRANK[z]!==undefined).length,0);
     eq("packed: 4 zones outside POP still pack, 3 chars wider",
        trip(NP,"Asia/Kabul",{y:2026,mo:11,d:1},"12",24,1),
-       NP.join(",")+"|Asia/Kabul|2026-11-1|12|24|len=14");
+       NP.join(",")+"|Asia/Kabul|2026-11-1|24|len=14");
     eq("packed: 16 zones (the 4-bit maximum)",
        trip(ZONES.slice(0,16).map(z=>z[1]),ZONES[0][1],{y:2026,mo:6,d:1},"12",0,0)
          .indexOf("NOT-PACKABLE"),-1);
@@ -1699,7 +1732,7 @@ function selftest(){
        trip(R,"America/New_York",{y:2069,mo:1,d:1},"12",0,0),"NOT-PACKABLE");
     eq("every frozen zone survives a packed round-trip",
        ZONES.filter(z=>trip([z[1]],z[1],{y:2026,mo:6,d:1},"12",7,0)
-                       !==z[1]+"|"+z[1]+"|2026-6-1|12|7").length,0);
+                       !==z[1]+"|"+z[1]+"|2026-6-1|7").length,0);
     eq("every POP zone takes the 6-bit code (36 bits -> 8 chars)",
        POP.filter(z=>{ S={rows:[z],home:z,date:{y:2026,mo:6,d:1},fmt:"12"}; pinned=7;
                        return packState().length!==8; }).length,0);
@@ -1717,6 +1750,15 @@ function selftest(){
                 S={rows:rows,home:rows[i],date:{y:2026,mo:6,d:1},fmt:"12"}; pinned=null;
                 const u=unpackState(packState());
                 if(!u||u.home!==rows[i]) return i; } return -1; })(),-1);
+    eq("a link with the reserved bits set decodes the same",
+       (()=>{ S={rows:R,home:R[0],date:{y:2026,mo:11,d:1},fmt:"12"}; pinned=24;
+              const a=packState(); let b="";
+              for(const ch of a) b+=B32.indexOf(ch).toString(2).padStart(5,"0");
+              const ref=JSON.stringify(unpackState(a));
+              return ["01","10","11"].every(v=>{        // home is row 0: they are bits 7-8
+                const c=b.slice(0,7)+v+b.slice(9); let t="";
+                for(let i=0;i<c.length;i+=5) t+=B32[parseInt(c.slice(i,i+5),2)];
+                return t!==a&&JSON.stringify(unpackState(t))===ref; }); })(),true);
     S=S0; pinned=P0; wantLong=W0;
   }
   eq("unpackState rejects lowercase",unpackState("k3m9qx4b2"),null);
@@ -2082,7 +2124,8 @@ const PRANK={}; POP.forEach((z,i)=>{ if(PRANK[z]===undefined) PRANK[z]=i; });
      ver   2   format version (=1)
      n     4   row count - 1, so 1..16 rows
      h0    1   1 = home is row 0 (almost always), else 4 more bits of row index
-     fmt   2   0=12h 1=24h 2=mx
+     resv  2   written 0, ignored when read: the clock format is the
+               viewer's own setting, so links do not carry it
      fD fP 1+1 date and pin present
      date 14   days from 2024-01-01, so 2024..2068        (only if fD)
      pin   5   column index                               (only if fP)
@@ -2112,7 +2155,7 @@ function packState(){
   put(n-1,4);
   const hi=S.rows.indexOf(S.home);
   if(hi<=0) put(1,1); else { put(0,1); put(hi,4); }
-  put(S.fmt==="24"?1:S.fmt==="mx"?2:0,2);
+  put(0,2);                                        // the viewer's format, not the link's
   put(hasD?1:0,1); put(pinned!==null?1:0,1);
   if(hasD) put(days,14);
   if(pinned!==null) put(pinned,5);
@@ -2144,7 +2187,8 @@ function unpackState(str){
     if(get(2)!==1) return null;
     const n=get(4)+1;
     const hi=get(1)?0:get(4);               // the ternary skips get(4) when h0 is set
-    const fm=get(2), hasD=get(1), hasP=get(1);
+    get(2);                                  // reserved
+    const hasD=get(1), hasP=get(1);
     let date=null, pin=null;
     if(hasD){ const dt=new Date(PEPOCH+get(14)*86400000);
               date={y:dt.getUTCFullYear(),mo:dt.getUTCMonth()+1,d:dt.getUTCDate()}; }
@@ -2160,8 +2204,7 @@ function unpackState(str){
     const home=raw[Math.min(hi,raw.length-1)];   // resolve before dedup shifts indices
     const opt=w=>p+w>b.length?0:get(w);          // the lenient tail
     const mn=opt(2)*15, li=opt(3), ln=li===7?(opt(10)+1)*15:(LEN_CODE[li]||60);
-    return {home:home,rows:[...new Set(raw)],date:date||todayIn(home),
-            fmt:["12","24","mx"][fm]||"12",pin:pin,
+    return {home:home,rows:[...new Set(raw)],date:date||todayIn(home),pin:pin,
             pinMin:pin===null?0:mn, pinLen:pin===null?60:ln};
   }catch(e){ return null; }
 }
@@ -2186,11 +2229,34 @@ function parseHash(h){
   return o;
 }
 
+/* The clock format a place writes: its country's convention, per CLDR. */
+function fmtFor(tz){ return zoneIs12(tz)?"12":"24"; }
+/* The browser's own language/region convention: the fallback when the engine
+   has no region data (Intl.Locale.getTimeZones -- Firefox, for one), where
+   every zone would otherwise read as 24-hour, Americans included. */
+function localeFmt(){
+  try{ const h=new Intl.DateTimeFormat(undefined,{hour:"numeric"}).resolvedOptions().hourCycle;
+       return h==="h11"||h==="h12"?"12":"24"; }catch(e){ return "12"; }
+}
+/* The default: the convention of the country this computer's time zone is in.
+   Not the browser language -- US English is the usual install default rather
+   than a choice, and would give am/pm to someone sitting in Zurich. */
+function localFmt(){
+  const f=fmtFor(detectHome());
+  return H12ZONES&&H12ZONES.size?f:localeFmt();
+}
+/* The clock format belongs to the viewer, not to the link: what they last
+   chose here, else their local default. A colleague in Germany opening your
+   link sees 24-hour; you see am/pm. */
+function viewerFmt(){
+  try{ const s=JSON.parse(localStorage.getItem(LS)); if(s&&FMTS[s.fmt]) return s.fmt; }catch(e){}
+  return localFmt();
+}
 function defaultState(){
   const home=detectHome();
   const rows=[home];
   for(const z of DEFAULT_ROWS) if(!rows.includes(z)) rows.push(z);
-  return {home,rows,date:todayIn(home),fmt:"12"};
+  return {home,rows,date:todayIn(home),fmt:localFmt()};
 }
 const FMTS={"12":1,"24":1,"mx":1};
 /* Whichever form the link arrived in is the form we keep writing, so a
@@ -2201,7 +2267,7 @@ function loadState(){
   if(h&&h.indexOf("=")<0){
     const u=unpackState(h);
     if(u){ pinned=u.pin; pinMin=u.pinMin; pinLen=u.pinLen;
-           return {home:u.home,rows:u.rows,date:u.date,fmt:u.fmt}; }
+           return {home:u.home,rows:u.rows,date:u.date,fmt:viewerFmt()}; }
   }
   if(h){
     wantLong=true;
@@ -2217,7 +2283,7 @@ function loadState(){
         pinMin=(pinned!==null&&/^(15|30|45)$/.test(q.m||""))?+q.m:0;
         pinLen=(pinned!==null&&/^\d{2,5}$/.test(q.l||"")&&+q.l%15===0&&
                 +q.l>=LEN_MIN&&+q.l<=LEN_MAX)?+q.l:60;
-        return {home,rows,date,fmt:FMTS[q.t]?q.t:"12"};
+        return {home,rows,date,fmt:viewerFmt()};     // a t= key is ignored: the format is the viewer's
       }
     }catch(e){}
   }
@@ -2232,7 +2298,9 @@ function saveState(){
   if(S.rows.length&&!S.rows.includes(S.home)) S.home=S.rows[0];
   try{ localStorage.setItem(LS,JSON.stringify(S)); }catch(e){}
   const packed=wantLong?null:packState();
-  if(packed){ history.replaceState(null,"","#"+packed); return; }
+  history.replaceState(null,"","#"+(packed||readableHash()));
+}
+function readableHash(){
   const P=["z="+S.rows.map(zPack).join(",")];
   if(S.home!==S.rows[0]) P.push("h="+zPack(S.home));
   /* A dateless link means "today", which is what you want from a bookmark --
@@ -2241,13 +2309,12 @@ function saveState(){
   const t0=todayIn(S.home);
   if(pinned!==null||S.date.y!==t0.y||S.date.mo!==t0.mo||S.date.d!==t0.d)
     P.push("d="+dPack(S.date));
-  if(S.fmt&&S.fmt!=="12") P.push("t="+S.fmt);
   if(pinned!==null){
     P.push("p="+pinned);
     if(pinMin) P.push("m="+pinMin);
     if(pinLen!==60) P.push("l="+pinLen);
   }
-  history.replaceState(null,"","#"+P.join("&"));
+  return P.join("&");
 }
 
 /* ============================================================
@@ -3203,7 +3270,7 @@ if(location.search.indexOf("selftest")>=0){
   if(!S.rows.includes(S.home)) S.home=S.rows[0];
   if(!S.date||!validDate(S.date.y,S.date.mo,S.date.d)) S.date=todayIn(S.home);
   // migrate the old boolean h24 flag to the three-way format setting
-  if(!FMTS[S.fmt]) S.fmt=S.h24===true?"24":"12";
+  if(!FMTS[S.fmt]) S.fmt=S.h24===true?"24":localFmt();
   delete S.h24;
   applyLabW();
   saveState(); render();

@@ -42,6 +42,12 @@ both of which are restricted on `file://`.
   Enter adds the top result. An offset search shows the offset it matched on.
 - **Three clock formats** — `am/pm`, `24`, and `MX`, which writes each row the
   way its own country writes clock time (Zurich `05:42`, New York `11:47p`).
+  A first visit starts in the convention of the country the computer's time
+  zone is in: 24-hour in Zurich, am/pm in New York. The browser language is
+  not used for this, because US English is usually an install default rather
+  than a choice. After that it is whatever you last picked. The format is not
+  part of a link: a colleague in Germany opening yours sees 24-hour while you
+  see am/pm.
 - **Correct DST**, including the awkward cases: 23/24/25-hour days, Lord Howe's
   half-hour shift, zones whose local midnight does not exist, and dates a zone
   skipped entirely when it crossed the date line.
@@ -117,7 +123,7 @@ significant bit first:
 | version | 2 | |
 | row count | 4 | minus one, so 1–16 rows |
 | home flag | 1 | set when home is row 0, which it nearly always is; otherwise 4 more bits |
-| clock format | 2 | |
+| reserved | 2 | written 0 and ignored on reading — the clock format is each viewer's own setting |
 | date / pin present | 1 + 1 | |
 | date | 14 | days from 2024-01-01, so 2024–2068 |
 | pinned column | 5 | |
@@ -147,9 +153,9 @@ Anything that does not fit falls back to the readable form: a zone outside
     .../#z=am.New_York,am.Los_Angeles,eu.Berlin,as.Shanghai&d=20260921&p=14
 
 `z` is the rows, `h` the home zone when it is not the first row, `d` the date,
-`t` the clock format, `p` the pinned column, `m` the meeting's start minute and
-`l` its length in minutes. IANA area prefixes fold to two letters (`am.` =
-`America/`), and the fragment carries `/` and `,` unescaped.
+`p` the pinned column, `m` the meeting's start minute and `l` its length in
+minutes. IANA area prefixes fold to two letters (`am.` = `America/`), and the
+fragment carries `/` and `,` unescaped.
 
 Arriving on a readable link keeps writing readable ones, so hand-editing does
 not turn opaque the moment it is applied. Links written before this encoding
@@ -161,6 +167,9 @@ Omitted keys take their default, so a link with no date always opens on today �
 useful for a bookmark. Pinning forces the date to be written, because a pin
 names one instant and would otherwise land on the wrong day. A 1-hour meeting
 from `:00` is the default and adds nothing.
+
+Neither form carries the clock format. Whoever opens a link reads it in their
+own: their last choice on that browser, else their local convention.
 
 ### QR codes
 
@@ -209,7 +218,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 258 assertions, covering:
+`index.html?selftest=1` locally. It runs 268 assertions, covering:
 - DST transitions, offset arithmetic, ISO weeks
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length
@@ -224,8 +233,9 @@ independent implementation.
 Roughly 2021 and newer (Chrome 84+, Safari 14.1+), set by flexbox `gap`.
 Newer APIs degrade rather than break:
 - without `Intl.supportedValuesOf`, the catalogue falls back to the Windows list
-- without `Intl.Locale.getTimeZones`, the `MX` format behaves as 24-hour and
-  country names are not searchable
+- without `Intl.Locale.getTimeZones`, the `MX` format behaves as 24-hour,
+  country names are not searchable, and the default clock format follows the
+  browser language instead of the computer's time zone
 - without `navigator.share`, the Link button copies instead
 
 ## Licence
