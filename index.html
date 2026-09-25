@@ -106,6 +106,46 @@ button.ui.on{background:var(--accent);border-color:var(--accent);color:#fff}
 /* ISO week of the displayed date, next to the date control it describes */
 .wknum{font-size:11px;font-weight:bold;color:#5b6875;background:#eef2f7;
   border-radius:6px;padding:6px 8px;white-space:nowrap;letter-spacing:.3px}
+button.wknum{border:none;font-family:inherit;line-height:inherit;cursor:pointer;position:relative}
+button.wknum:hover,button.wknum[aria-expanded="true"]{background:#dde6f2;color:var(--accent)}
+button.wknum:active{filter:brightness(.94)}
+
+/* ---------- week calendar: what the W badge opens ----------
+   A month with ISO week numbers down the side. Lives in <body>, outside the
+   re-rendered #app, and is placed under the badge by placeCal(). */
+.cal{position:absolute;z-index:150;background:#fff;border:1px solid var(--line);
+  border-radius:10px;box-shadow:0 10px 30px rgba(16,32,55,.18);padding:8px 10px;
+  -webkit-user-select:none;user-select:none}
+.calhd{display:flex;align-items:center;justify-content:space-between;margin-bottom:2px}
+.calttl{font-size:12.5px;font-weight:bold}
+.cal button{font-family:inherit;font-size:12px;border:none;background:none;cursor:pointer;
+  border-radius:6px;color:var(--text);position:relative;height:28px;padding:0}
+.cal button:active{filter:brightness(.94)}
+.cal button:disabled{opacity:.3;cursor:default}
+.cal button:focus-visible{outline:2px solid var(--accent);outline-offset:-2px}
+.cal .calnav{width:30px;font-size:17px;line-height:1;color:#55606d}
+.cal .calnav:hover:not(:disabled){background:#eef3f9}
+.calrow{display:grid;grid-template-columns:34px repeat(7,30px);align-items:center}
+.calh span{font-size:10px;color:var(--muted);text-align:center;padding:4px 0 3px}
+.calh span.we{color:#d2604f}
+/* the week on show, then hover; weekends and days outside the month */
+.cal .cur .cald{background:#f2f6fb}
+.cal .cald:hover{background:#e6edf6}
+.cal .cald.we{color:#d2604f}
+.cal .cald.out{color:#b8c0ca}
+.cal .cald.out.we{color:#e3aaa1}
+.cal .calrow .cald.sel{background:var(--accent);color:#fff;font-weight:bold}
+/* today: the same red dot the day strip uses */
+.cal .cald.tdy::after{content:"";position:absolute;left:50%;bottom:3px;width:4px;height:4px;
+  margin-left:-2px;border-radius:50%;background:var(--today)}
+.cal .cald.sel.tdy::after{background:#fff}
+.cal .calwk{font-size:10.5px;font-weight:bold;color:#7b8794;background:#f1f4f8;margin-right:4px}
+.cal .cur .calwk{color:var(--accent);background:var(--accent-soft)}
+.cal .calwk:hover{background:var(--accent);color:#fff}
+/* pointing at a week number lights up the week it jumps to */
+.cal .calwk:hover~.cald{background:var(--accent-soft)}
+.cal .calwk:hover~.cald.sel{background:var(--accent)}
+.calft{font-size:10.5px;color:var(--muted);text-align:center;margin-top:5px}
 
 /* ---------- search ---------- */
 .search{position:relative;flex:1;max-width:520px;min-width:200px}
@@ -550,6 +590,11 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
      neighbours never share a tap */
   button.ui{position:relative}
   button.ui::after{content:"";position:absolute;inset:-8px -2px}
+  button.wknum::after{content:"";position:absolute;inset:-8px -3px}
+  /* 34 px cells for a thumb; 296 px overall, inside a 320 px screen */
+  .calrow{grid-template-columns:36px repeat(7,34px)}
+  .cal button{height:34px;font-size:13px}
+  .cal .calwk{font-size:11px}
   .pinctl{flex:1 0 100%;row-gap:6px}
   .drift{font-size:11px;padding:4px 8px}
   .pinsent span{font-size:11px;display:-webkit-box;-webkit-line-clamp:2;
@@ -1341,6 +1386,71 @@ function selftest(){
   eq("ISO week 2027-01-01 (Fri) still 2026",wk(2027,1,1),"2026-W53");
   eq("ISO week 2027-01-04 (Mon) starts 2027",wk(2027,1,4),"2027-W1");
   eq("ISO week 2028-02-29 (leap day)",wk(2028,2,29),"2028-W9");
+
+  // --- focus survives a re-render: the key that finds the button again ---
+  {
+    const box=document.createElement("div");
+    box.innerHTML='<button id="wk">W39</button><button data-len="-60">-1h</button>'+
+      '<button data-mv="1" data-x=\'a"b\'>x</button><button>plain</button><input id="dp">';
+    const k=i=>focusKey(box.children[i],box);
+    eq("focusKey: by id, by data attributes (quotes escaped), none for a bare button or an input",
+       [k(0),k(1),k(2),k(3),k(4)].join(" | "),
+       '[id="wk"] | button[data-len="-60"] | button[data-mv="1"][data-x="a\\"b"] |  | ');
+    eq("focusKey: each finds its button again",
+       [0,1,2].every(i=>box.querySelector(k(i))===box.children[i]),true);
+  }
+
+  // --- week calendar (rows cross-checked against Python's isocalendar) ---
+  {
+    const wn=m=>m.mo+"/"+m.d+":"+isoWeek(m.y,m.mo,m.d).w, rows=(y,m)=>calWeeks(y,m).map(wn).join(" ");
+    eq("calendar: September 2026 is weeks 36-40, from Mon 31 Aug",rows(2026,9),
+       "8/31:36 9/7:37 9/14:38 9/21:39 9/28:40");
+    eq("calendar: August 2026 needs six rows",rows(2026,8),
+       "7/27:31 8/3:32 8/10:33 8/17:34 8/24:35 8/31:36");
+    eq("calendar: February 2021 fits in four",rows(2021,2),"2/1:5 2/8:6 2/15:7 2/22:8");
+    eq("calendar: January 2027 opens in week 53 of 2026",rows(2027,1),
+       "12/28:53 1/4:1 1/11:2 1/18:3 1/25:4");
+    eq("calendar: December 2025 closes in week 1 of 2026",rows(2025,12),
+       "12/1:49 12/8:50 12/15:51 12/22:52 12/29:1");
+    const fri={y:2026,mo:9,d:25};
+    eq("week jump keeps the weekday: Fri in W39 -> Fri in W42",
+       dkey(sameWeekday(fri,{y:2026,mo:10,d:12})),"2026-10-16");
+    eq("week jump from a Sunday lands on a Sunday",
+       dkey(sameWeekday({y:2026,mo:9,d:27},{y:2026,mo:9,d:28})),"2026-10-4");
+    eq("week jump across New Year: Thu 31 Dec 2026 -> W1 2027",
+       dkey(sameWeekday({y:2026,mo:12,d:31},{y:2027,mo:1,d:4})),"2027-1-7");
+    eq("weekTitle: inside one month",weekTitle({y:2026,mo:9,d:21},2026),"Week 39: 21\u201327 Sep");
+    eq("weekTitle: across two months",weekTitle({y:2026,mo:8,d:31},2026),"Week 36: 31 Aug\u20136 Sep");
+    eq("weekTitle: names the ISO year when it is not the calendar's",
+       weekTitle({y:2026,mo:12,d:28},2027),"Week 53 of 2026: 28 Dec\u20133 Jan");
+    const box=document.createElement("div"), q=x=>[...box.querySelectorAll(x)];
+    box.innerHTML=calHTML(2026,9,fri,fri,fri);
+    eq("calendar HTML: a week button per row, 36-40",q(".calwk").map(b=>b.textContent).join(","),
+       "36,37,38,39,40");
+    eq("calendar HTML: the shown week and the shown day are marked",
+       q(".cur .calwk")[0].textContent+" "+q(".sel").map(b=>b.textContent).join(","),"39 25");
+    eq("calendar HTML: 31 Aug and 1-4 Oct are dimmed as outside September",
+       q(".out").map(b=>b.textContent).join(","),"31,1,2,3,4");
+    eq("calendar HTML: weekends marked in every row",q(".cald.we").length,10);
+    eq("calendar HTML: one tab stop among the days, one among the weeks, both on the shown day",
+       q('.cald[tabindex="0"]').map(b=>b.dataset.cd)+"|"+q('.calwk[tabindex="0"]').map(b=>b.dataset.cw),
+       "2026-9-25|2026-9-21");
+    eq("calendar HTML: every day has a spoken name",
+       q(".cald").every(b=>/^[A-Z][a-z]+day \d+ [A-Z][a-z]+ \d{4}/.test(b.getAttribute("aria-label"))),true);
+    box.innerHTML=calHTML(1900,1,{y:1900,mo:1,d:1},fri,{y:1900,mo:1,d:1});
+    eq("calendar HTML: no month before January 1900",q('[data-cm="-1"]')[0].disabled,true);
+    box.innerHTML=calHTML(2200,12,{y:2200,mo:12,d:31},fri,{y:2200,mo:12,d:31});
+    eq("calendar HTML: none after December 2200, and its 2201 days are not offered",
+       q('[data-cm="1"]')[0].disabled+" "+q(".cald:disabled").map(b=>b.dataset.cd).join(","),
+       "true 2201-1-1,2201-1-2,2201-1-3,2201-1-4");
+    const c0=[calY,calMo,calFoc];
+    calY=1900; calMo=1; calFoc={y:1900,mo:1,d:15}; calShift(-1); const a=calY+"-"+calMo;
+    calY=2200; calMo=12; calFoc={y:2200,mo:12,d:31}; calShift(1); const b=calY+"-"+calMo;
+    calY=2026; calMo=1; calFoc={y:2026,mo:1,d:31}; calShift(1);
+    eq("calShift: holds at 1900 and 2200, and 31 Jan -> 28 Feb",a+" "+b+" "+dkey(calFoc),
+       "1900-1 2200-12 2026-2-28");
+    [calY,calMo,calFoc]=c0;
+  }
 
   // merged catalogue: Windows labels + everything else ICU knows
   eq("catalogue is lazy (not built at startup)",CATALOG===null,true);
@@ -2356,8 +2466,25 @@ function hourColor(h,mi){
   return "rgb(189,201,215)";
 }
 
+/* Every render rebuilds #app, which threw keyboard focus back to the top of
+   the page -- every 30 s from the clock refresh alone, and after any button
+   that re-renders. A focused button is found again in the new DOM by its id
+   or data attributes. Buttons only: refocusing an input would pop up a
+   phone's keyboard or date picker. */
+function focusKey(el,app){
+  if(!el||el.tagName!=="BUTTON"||!app||!app.contains(el)) return null;
+  const q=v=>'"'+v.replace(/["\\]/g,"\\$&")+'"';
+  if(el.id) return "[id="+q(el.id)+"]";
+  const a=[...el.attributes].filter(x=>x.name.indexOf("data-")===0);
+  return a.length?"button"+a.map(x=>"["+x.name+"="+q(x.value)+"]").join(""):null;
+}
+function refocus(app,fk){
+  const el=fk&&app.querySelector(fk);
+  if(el&&document.activeElement!==el) el.focus({preventScroll:true});
+}
 function render(){
   const app=document.getElementById("app");
+  const fk=focusKey(document.activeElement,app);
   const D=S.date;
   const NOW0=Date.now();          // needed by the header, before the grid maths
 
@@ -2437,13 +2564,14 @@ function render(){
       '<button class="ui daynav" id="dnext" title="Next day">&#8250;</button>'+
       '<div class="days">'+tabs.join("")+'</div>'+
       '<div class="spacer"></div>'+
-      '<span class="wknum" title="ISO week of the displayed date">W'+
-        isoWeek(D.y,D.mo,D.d).w+'</span>'+
+      '<button class="wknum" id="wk" aria-haspopup="dialog" aria-expanded="'+calOn+'"'+
+        ' title="ISO week of the displayed date. Click for a calendar with week numbers.">W'+
+        isoWeek(D.y,D.mo,D.d).w+'</button>'+
       '<input type="date" id="dp" class="dpick" title="Jump to any date" value="'+
         D.y+"-"+pad(D.mo)+"-"+pad(D.d)+'">'+
     '</div>';
 
-  if(!S.rows.length){ app.innerHTML=html+'<div class="empty">No zones. Add one above.</div>'; wire(); return; }
+  if(!S.rows.length){ app.innerHTML=html+'<div class="empty">No zones. Add one above.</div>'; wire(); refocus(app,fk); return; }
 
   /* A zone can skip a calendar date outright when it crosses the date line
      (Samoa lost 2011-12-30, Kiritimati lost 1994-12-31). hoursInDay is then 0
@@ -2452,7 +2580,7 @@ function render(){
     app.innerHTML=html+'<div class="empty">'+titleMon(D.mo)+" "+D.d+", "+D.y+
       " never happened in "+shortName(metaFor(S.home)[0])+
       " &mdash; the zone skipped this date when it crossed the date line.</div>";
-    wire(); return;
+    wire(); refocus(app,fk); return;
   }
 
   // --- precompute every cell so we can mark all-business columns ---
@@ -2639,6 +2767,8 @@ function render(){
 
   app.innerHTML=html;
   wire();
+  refocus(app,fk);
+  if(calOn) placeCal();                 // the badge was rebuilt; keep the calendar under it
 }
 
 /* Draw the pinned column as a single rounded outline spanning the ruler and
@@ -2703,6 +2833,9 @@ document.addEventListener("keydown",function(e){
   const app=document.getElementById("app");          // absent in self-test mode
   if(e.ctrlKey||e.metaKey||e.altKey||!S||!app||!app.firstChild) return;
   const t=e.target, tag=t&&t.tagName;
+  /* While the week calendar is open it owns the keyboard: its own handler
+     does the arrows, and a shortcut here would change the view behind it. */
+  if(calOn){ if(e.key==="Escape"){ e.preventDefault(); closeCal(true); } return; }
   if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||(t&&t.isContentEditable)) return;
   const k=e.key;
   if((k==="ArrowLeft"||k==="ArrowRight")&&lastN>0){
@@ -2751,6 +2884,183 @@ function showUndo(msg,snap){
   };
   clearTimeout(undoTimer); undoTimer=setTimeout(hideUndo,6000);
 }
+/* ---------- week calendar ----------
+   The W badge opens a month calendar with ISO week numbers down the side. A
+   week number jumps to that week on the same weekday -- a Friday stays a
+   Friday -- and a day goes straight to that day. It lives in <body>, like the
+   undo toast, so the 30-second refresh cannot close it under the pointer.
+   Keyboard: arrows move by day (by week in the week column), Page Up/Down by
+   month and with Shift by year, Home/End to the week's ends, Enter picks,
+   Esc closes. Tab steps through it as if it sat right after the badge. */
+const MONL=["January","February","March","April","May","June","July","August",
+            "September","October","November","December"];
+const WDL=["Monday","Tuesday","Wednesday","Thursday","Friday","Saturday","Sunday"];
+const CAL_MIN=1900*12, CAL_MAX=2200*12+11;          // validDate's range, in months
+function dow1(dt){ return (new Date(Date.UTC(dt.y,dt.mo-1,dt.d)).getUTCDay()+6)%7; }  // Mon 0..Sun 6
+function mondayOf(dt){ return addDays(dt,-dow1(dt)); }
+const eqDate=(a,b)=>a.y===b.y&&a.mo===b.mo&&a.d===b.d;
+const dkey=d=>d.y+"-"+d.mo+"-"+d.d;
+function dparse(k){ const p=k.split("-"); return {y:+p[0],mo:+p[1],d:+p[2]}; }
+/* The ISO weeks a month touches, four to six of them, as each one's Monday. */
+function calWeeks(y,mo){
+  const out=[];
+  for(let m=mondayOf({y:y,mo:mo,d:1});m.y*12+m.mo<=y*12+mo;m=addDays(m,7)) out.push(m);
+  return out;
+}
+/* Jumping to a week keeps the weekday you were looking at. */
+function sameWeekday(from,mon){ return addDays(mon,dow1(from)); }
+/* "Week 39: 21-27 Sep"; the ISO year is named when it is not the calendar's,
+   as for the week 53 that opens January 2027. */
+function weekTitle(mon,y){
+  const su=addDays(mon,6), w=isoWeek(mon.y,mon.mo,mon.d);
+  return "Week "+w.w+(w.y!==y?" of "+w.y:"")+": "+
+    (mon.mo===su.mo?mon.d:mon.d+" "+titleMon(mon.mo))+"\u2013"+su.d+" "+titleMon(su.mo);
+}
+/* One tab stop among the days and one among the week numbers (roving
+   tabindex), both on `foc`, the day the keyboard is on. */
+function calHTML(y,mo,sel,today,foc){
+  const at=y*12+mo-1, selMon=mondayOf(sel), focMon=mondayOf(foc);
+  let h='<div class="calhd">'+
+    '<button class="calnav" data-cm="-1" aria-label="Previous month"'+
+      (at<=CAL_MIN?" disabled":"")+'>&#8249;</button>'+
+    '<span class="calttl" aria-live="polite">'+MONL[mo-1]+" "+y+'</span>'+
+    '<button class="calnav" data-cm="1" aria-label="Next month"'+
+      (at>=CAL_MAX?" disabled":"")+'>&#8250;</button></div>'+
+    '<div class="calrow calh"><span title="ISO week">wk</span>'+
+    ["Mo","Tu","We","Th","Fr","Sa","Su"].map((d,i)=>'<span'+(i>4?' class="we"':"")+'>'+d+'</span>').join("")+
+    '</div>';
+  for(const mon of calWeeks(y,mo)){
+    const land=sameWeekday(sel,mon), t=weekTitle(mon,y);
+    h+='<div class="calrow'+(eqDate(mon,selMon)?" cur":"")+'">'+
+      '<button class="calwk" data-cw="'+dkey(mon)+'" tabindex="'+(eqDate(mon,focMon)?0:-1)+'"'+
+        (validDate(land.y,land.mo,land.d)?"":" disabled")+' title="'+t+'" aria-label="'+t+'">'+
+        isoWeek(mon.y,mon.mo,mon.d).w+'</button>';
+    for(let i=0;i<7;i++){
+      const d=addDays(mon,i), on=eqDate(d,sel), td=eqDate(d,today);
+      h+='<button class="cald'+(d.mo!==mo?" out":"")+(i>4?" we":"")+(on?" sel":"")+(td?" tdy":"")+'"'+
+        ' data-cd="'+dkey(d)+'" tabindex="'+(eqDate(d,foc)?0:-1)+'"'+
+        (validDate(d.y,d.mo,d.d)?"":" disabled")+
+        ' aria-label="'+WDL[i]+" "+d.d+" "+MONL[d.mo-1]+" "+d.y+(on?", shown":"")+(td?", today":"")+'">'+
+        d.d+'</button>';
+    }
+    h+='</div>';
+  }
+  return h+'<div class="calft">'+(touchMode?"Tap":"Click")+' a week number to jump to that week</div>';
+}
+let calOn=false, calY=2026, calMo=1, calFoc={y:2026,mo:1,d:1};
+/* Move the calendar by months, keeping the keyboard's day number where the
+   new month has it (31 Jan -> 28 Feb). */
+function calShift(n){
+  const at=Math.max(CAL_MIN,Math.min(CAL_MAX,calY*12+calMo-1+n));
+  calY=Math.floor(at/12); calMo=at%12+1;
+  const last=new Date(Date.UTC(calY,calMo,0)).getUTCDate();
+  calFoc={y:calY,mo:calMo,d:Math.min(calFoc.d,last)};
+}
+function placeCal(){
+  const c=document.getElementById("cal"), b=document.getElementById("wk");
+  if(!c||!b) return;
+  const r=b.getBoundingClientRect(), vw=document.documentElement.clientWidth;
+  c.style.left=(Math.max(8,Math.min(r.left,vw-8-c.offsetWidth))+window.scrollX)+"px";
+  c.style.top=(r.bottom+6+window.scrollY)+"px";
+}
+function drawCal(focusSel){
+  const c=document.getElementById("cal"); if(!c) return;
+  c.innerHTML=calHTML(calY,calMo,S.date,todayIn(S.home),calFoc);
+  placeCal();
+  const f=focusSel&&c.querySelector(focusSel); if(f) f.focus();
+}
+function openCal(){
+  if(calOn) return;
+  calOn=true; calFoc={y:S.date.y,mo:S.date.mo,d:S.date.d}; calY=calFoc.y; calMo=calFoc.mo;
+  const c=document.createElement("div"); c.id="cal"; c.className="cal";
+  c.setAttribute("role","dialog"); c.setAttribute("aria-label","Week calendar");
+  c.addEventListener("click",calClick);
+  c.addEventListener("keydown",calKey);
+  // a click on the title or padding must not drop focus out of the calendar
+  c.addEventListener("mousedown",e=>{ if(!e.target.closest("button")) e.preventDefault(); });
+  c.addEventListener("focusout",e=>{                  // focus moved elsewhere: close
+    const t=e.relatedTarget;
+    if(calOn&&t&&!c.contains(t)&&t.id!=="wk") closeCal(false);
+  });
+  document.body.appendChild(c);
+  drawCal('[data-cd="'+dkey(calFoc)+'"]');
+  const b=document.getElementById("wk"); if(b) b.setAttribute("aria-expanded","true");
+}
+function closeCal(refocus){
+  if(!calOn) return;
+  calOn=false;
+  const c=document.getElementById("cal"); if(c) c.remove();
+  const b=document.getElementById("wk");
+  if(b){ b.setAttribute("aria-expanded","false"); if(refocus) b.focus(); }
+}
+function calClick(e){
+  const b=e.target.closest("button"); if(!b||b.disabled) return;
+  if(b.dataset.cm){ calShift(+b.dataset.cm); drawCal('[data-cm="'+b.dataset.cm+'"]'); return; }
+  const d=b.dataset.cd?dparse(b.dataset.cd)
+         :b.dataset.cw?sameWeekday(S.date,dparse(b.dataset.cw)):null;
+  if(!d||!validDate(d.y,d.mo,d.d)) return;
+  const kb=e.detail===0;              // Enter or Space: hand focus back to the badge
+  closeCal(false);
+  S.date=d; pinned=null; saveState(); render();
+  if(kb){ const w=document.getElementById("wk"); if(w) w.focus(); }
+}
+function calKey(e){
+  const c=e.currentTarget, t=e.target, k=e.key;
+  if(k==="Escape"){ e.preventDefault(); e.stopPropagation(); closeCal(true); return; }
+  if(k==="Tab"){                      // out of the far end: on to the date box
+    const f=[...c.querySelectorAll("button:not(:disabled)")].filter(b=>b.tabIndex>=0);
+    if(e.shiftKey&&t===f[0]){ e.preventDefault(); closeCal(true); }
+    else if(!e.shiftKey&&t===f[f.length-1]){
+      e.preventDefault(); closeCal(false);
+      const n=document.getElementById("dp")||document.getElementById("wk"); if(n) n.focus();
+    }
+    return;
+  }
+  const wk=!!(t.dataset&&t.dataset.cw);
+  if(!wk&&!(t.dataset&&t.dataset.cd)) return;          // the month arrows: plain buttons
+  const f=calFoc, step={ArrowLeft:-1,ArrowRight:1,ArrowUp:-7,ArrowDown:7}[k];
+  if(k==="PageUp"||k==="PageDown"){
+    e.preventDefault(); e.stopPropagation();
+    calShift((k==="PageUp"?-1:1)*(e.shiftKey?12:1));
+    drawCal(wk?'[data-cw="'+dkey(mondayOf(calFoc))+'"]':'[data-cd="'+dkey(calFoc)+'"]');
+    return;
+  }
+  let d=null;
+  if(wk){ if(k==="ArrowUp"||k==="ArrowDown") d=addDays(f,step); }
+  else if(step) d=addDays(f,step);
+  else if(k==="Home") d=addDays(f,-dow1(f));
+  else if(k==="End") d=addDays(f,6-dow1(f));
+  if(!d) return;
+  e.preventDefault(); e.stopPropagation();
+  if(!validDate(d.y,d.mo,d.d)) return;
+  calFoc=d;
+  /* A day shows its own month. A week stays on this page while the page has
+     it, and otherwise turns to the month of the day it lands on -- which
+     always has that week. */
+  const mon=mondayOf(d);
+  if(wk?!calWeeks(calY,calMo).some(m=>eqDate(m,mon)):(d.y!==calY||d.mo!==calMo)){
+    calY=d.y; calMo=d.mo;
+  }
+  drawCal(wk?'[data-cw="'+dkey(mon)+'"]':'[data-cd="'+dkey(d)+'"]');
+}
+/* A press anywhere else closes it. On a phone the calendar covers most of
+   the screen, so the tap that dismisses it is not aimed at what lies
+   underneath -- a zone name (which would become home), a row's remove, a
+   column -- and it goes no further. A mouse click was aimed, and goes on. */
+let calSwallow=0;
+document.addEventListener("pointerdown",function(e){
+  if(!calOn) return;
+  const c=document.getElementById("cal"), b=document.getElementById("wk");
+  if((c&&c.contains(e.target))||(b&&b.contains(e.target))) return;
+  closeCal(false);
+  if(e.pointerType==="touch"||e.pointerType==="pen") calSwallow=Date.now()+700;
+},true);
+document.addEventListener("click",function(e){
+  if(calSwallow&&Date.now()<calSwallow){ e.stopPropagation(); e.preventDefault(); }
+  calSwallow=0;
+},true);
+window.addEventListener("resize",function(){ if(calOn) placeCal(); });
+
 /* Change the home zone without losing your place. A pinned meeting keeps its
    instant and length, re-expressed in the new home's day and columns -- the
    view changes, the meeting does not. With no pin, a view of today stays
@@ -3051,6 +3361,7 @@ function wire(){
     showUndo("Reset to defaults",snap);
   };
   // Today also re-centres on now, even when today is already showing
+  const wkb=$("#wk"); if(wkb) wkb.onclick=()=>{ if(calOn) closeCal(true); else openCal(); };
   const tb=$("#todaybtn"); if(tb) tb.onclick=()=>{
     S.date=todayIn(S.home); pinned=null; scrollKey=""; saveState(); render();
   };

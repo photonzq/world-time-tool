@@ -104,7 +104,15 @@ both of which are restricted on `file://`.
   zone's full name does not fit; double-click the divider to reset. The width
   is remembered. Hovering a place or its subtitle shows the full text and the
   IANA id regardless.
-- Weekend hatching, ISO week number, live clock, permalinks in the URL hash.
+- **Week calendar.** Click the week number (`W39`) next to the date for a
+  month calendar with ISO week numbers down the side. A week number jumps to
+  that week on the same weekday, so a Friday stays a Friday; a day goes
+  straight to that day. By keyboard: arrows move by day, or by week in the
+  week column; Page Up/Down by month, with Shift by year; Home/End to the ends
+  of the week; Enter picks; Esc closes. On a phone, the tap that dismisses it
+  does nothing else, so it cannot pin a column or change the home zone by
+  accident.
+- Weekend hatching, live clock, permalinks in the URL hash.
 
 ## Links
 
@@ -218,8 +226,8 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 268 assertions, covering:
-- DST transitions, offset arithmetic, ISO weeks
+`index.html?selftest=1` locally. It runs 290 assertions, covering:
+- DST transitions, offset arithmetic, ISO weeks and the week calendar
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length
 - the calendar file format, DST drift notes and slot scoring
