@@ -46,11 +46,18 @@ both of which are restricted on `file://`.
   half-hour shift, zones whose local midnight does not exist, and dates a zone
   skipped entirely when it crossed the date line.
 - **Pin a meeting.** Click a column, or on desktop drag across several. The
-  pinned bar sets the start (`:00` `:15` `:30` `:45`) and the length (30 minutes
-  to 4 hours). Each zone gets a chip with its local range, coloured by working
-  hours over the *whole* meeting: 9–5 in that zone's own time, so a meeting
-  counts only if it ends by 17:00. A 2-hour meeting at 4 PM is fringe even
-  though the 4 PM column is green. From the bar:
+  pinned bar sets the **start** and the **stop**, each to the quarter hour
+  (`:00` `:15` `:30` `:45`). The length between them is shown with **−1h** and
+  **+1h** to move the end by whole hours, from 15 minutes up to 256 hours —
+  what a two-character field in the link holds — with **+1h** greyed out at
+  the top. Picking a start keeps the stop where it was; picking a stop moves
+  the end to the nearest matching quarter. A meeting that runs into a later
+  day shows it: **+1d** on the chip, "(ends Wed 23 Sep)" in the sentence, both
+  dates in the heading. (A genuinely multi-day booking would be better served
+  by a start date and an end date than by +1h.) Each zone gets a chip with its
+  local range, coloured by working hours over the *whole* meeting: 9–5 in that
+  zone's own time, so a meeting counts only if it ends by 17:00. A 2-hour
+  meeting at 4 PM is fringe even though the 4 PM column is green. From the bar:
   - **Copy sentence** — prose for an email or a prompt, ending in an ISO 8601
     interval
   - **Add to calendar** — an `.ics` file generated in the page, times in UTC so
@@ -97,10 +104,10 @@ significant bit first:
 | date | 14 | days from 2024-01-01, so 2024–2068 |
 | pinned column | 5 | |
 | each row | 6 or 9 | `0` + 5-bit rank for the 32 most-compared zones, else `1` + 8-bit `ZONES` index |
-| meeting | 2 + 3 | start minute and length, only when the meeting is not the default 1 h from `:00` |
+| meeting | 2 + 3, or 2 + 3 + 10 | start minute and length, only when the meeting is not the default 1 h from `:00`. The six original preset lengths keep a 3-bit code; any other quarter-hour length is code 7 plus 10 bits, two characters' worth: $2^{10}$ = 1024 quarter hours, so up to 256 h |
 
-Four common zones with a date and a pin is 54 bits — **11 characters**, one more
-with a non-default meeting. Without a date or pin it is 7.
+Four common zones with a date and a pin is 54 bits — **11 characters**, one to
+three more with a non-default meeting. Without a date or pin it is 7.
 
 The meeting tail is read leniently: reading past the end yields 0, which is
 the default. So a link without it decodes exactly as it always did, and an
@@ -184,7 +191,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 219 assertions, covering:
+`index.html?selftest=1` locally. It runs 240 assertions, covering:
 - DST transitions, offset arithmetic, ISO weeks
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length

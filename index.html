@@ -287,6 +287,9 @@ button.ui.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .acts button[data-up]{cursor:grab}
 /* a held label must not pop the iOS text callout or start a selection */
 .row:not(.hdr) .lab{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+/* a meeting running into a later day: "+1d" after its end, flight style */
+.dplus{font-size:8.5px;font-weight:bold;color:#7a5bb5;margin-left:2px;vertical-align:3px}
+.pinbox.cont{border-right-style:dashed;border-top-right-radius:0;border-bottom-right-radius:0}
 /* the span being dragged out, before it becomes a pin */
 .selbox{position:absolute;border:1.5px dashed var(--accent);border-radius:8px;
   background:rgba(47,111,208,.06);pointer-events:none;z-index:2}
@@ -334,6 +337,16 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
 .pseg button:first-child{border-left:none}
 .pseg button:hover{background:#f4f7fb;color:var(--text)}
 .pseg button.on{background:var(--accent);color:#fff}
+/* length readout between -1h and +1h */
+.plen{display:inline-flex;align-items:stretch;border:1px solid var(--line);
+  border-radius:6px;overflow:hidden;background:#fff}
+.plen button{font-family:inherit;font-size:11px;font-weight:bold;cursor:pointer;
+  border:none;background:#fff;color:#55606d;padding:4px 8px;line-height:1.2}
+.plen button:hover:not(:disabled){background:#f4f7fb;color:var(--text)}
+.plen button:disabled{color:#c9d0d8;cursor:default}
+.plen b{font-size:11.5px;padding:4px 9px;min-width:74px;text-align:center;
+  border-left:1px solid var(--line);border-right:1px solid var(--line);
+  display:flex;align-items:center;justify-content:center;white-space:nowrap}
 .webadge{display:inline-block;margin-left:6px;font-size:8.5px;font-weight:bold;
   letter-spacing:.5px;color:#7a5bb5;border:1px solid #cfc0ea;background:#f4efff;
   border-radius:4px;padding:1px 4px;vertical-align:1px}
@@ -527,6 +540,7 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
   .pinsent span#psText{flex:1 0 100%}
   /* ~30px targets: these are the controls a thumb actually uses here */
   .pseg button{padding:7px 8px;font-size:11.5px}
+  .plen button{padding:7px 10px;font-size:11.5px}
   .pinctl{flex:1 0 100%;row-gap:6px}
   .drift{font-size:11px;padding:4px 8px}
   .pinsent span{font-size:11px;display:-webkit-box;-webkit-line-clamp:2;
@@ -1017,22 +1031,29 @@ function clockWords(w,h24){
 }
 /* "9:15–10:15 AM" when both ends share a half of the day, "11:30 AM–12:30 PM"
    when they do not; 24-hour clocks never need the suffix. */
-function clockRange(a,b,h24){
+function clockRange(a,b,h24,full){          // full: never merge the suffixes
   if(h24) return pad(a.h)+":"+pad(a.mi)+"\u2013"+pad(b.h)+":"+pad(b.mi);
   const hm=w=>(w.h%12===0?12:w.h%12)+":"+pad(w.mi), ap=w=>w.h<12?"AM":"PM";
-  return ap(a)===ap(b)?hm(a)+"\u2013"+hm(b)+" "+ap(b)
-                      :hm(a)+" "+ap(a)+"\u2013"+hm(b)+" "+ap(b);
+  return ap(a)===ap(b)&&!full?hm(a)+"\u2013"+hm(b)+" "+ap(b)
+                             :hm(a)+" "+ap(a)+"\u2013"+hm(b)+" "+ap(b);
+}
+/* A range that runs into a later day says which day it ends on. "9:00-10:00
+   AM" would read as one morning, so a multi-day range also keeps both AM/PM
+   suffixes. */
+function rangeWords(t0,t1,tz){
+  const w=wall(t0,tz), e=wall(t1,tz), n=spillDays(t0,t1,tz);
+  return clockRange(w,e,uses24(tz),n>0)+(n>0?" (ends "+shortDate(e)+")":"");
 }
 /* The UTC stamp is an ISO 8601 interval, start/end, so anything parsing the
    sentence gets the meeting unambiguously, length included. */
 function pinSentence(t0,t1){
   const hw=wall(t0,S.home), he=wall(t1,S.home);
-  const head=longDate(t0,S.home)+", "+clockRange(hw,he,uses24(S.home))+
+  const head=longDate(t0,S.home)+", "+rangeWords(t0,t1,S.home)+
     " in "+cityOf(S.home)+" ("+abbrOf(t0,S.home)+")";
   const others=S.rows.filter(z=>z!==S.home).map(tz=>{
     const w=wall(t0,tz), e=wall(t1,tz);
     const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
-    return clockRange(w,e,uses24(tz))+" in "+cityOf(tz)+" ("+abbrOf(t0,tz)+")"+
+    return rangeWords(t0,t1,tz)+" in "+cityOf(tz)+" ("+abbrOf(t0,tz)+")"+
       (sameDay?"":" on "+shortDate(w));
   });
   let s=head;
@@ -1413,10 +1434,22 @@ function selftest(){
     eq("default meeting writes no link tail",(pinMin=0,pinLen=60,packState()),"99GV3900OK");
     eq("a link from before the tail existed decodes to the default meeting",
        (u=>u.pin+"|"+u.pinMin+"|"+u.pinLen)(unpackState("9PGV2E00GC8")),"14|0|60");
-    eq("every start x length combination round-trips",(()=>{
-        for(const m of [0,15,30,45]) for(const l of LEN_OPTS){
+    eq("every start x quarter-hour length (64) round-trips",(()=>{
+        for(const m of [0,15,30,45]) for(let l=15;l<=240;l+=15){
           pinMin=m; pinLen=l; const u=unpackState(packState());
           if(!u||u.pinMin!==m||u.pinLen!==l) return m+"/"+l; }
+        return "ok"; })(),"ok");
+    eq("a preset length still encodes exactly as before the stop control",
+       (pinMin=15,pinLen=90,packState()),"99GV3900OL8");
+    eq("...and decodes to the same meeting",
+       (u=>u.pinMin+"|"+u.pinLen)(unpackState("99GV3900OL8")),"15|90");
+    eq("a non-preset length costs two characters more than a preset",
+       (pinMin=0,pinLen=45,packState().length)-(pinMin=0,pinLen=30,packState().length),2);
+    eq("every length up to the 256 h ceiling (1024) round-trips",(()=>{
+        pinMin=0;
+        for(let l=15;l<=LEN_MAX;l+=15){
+          pinLen=l; const u=unpackState(packState());
+          if(!u||u.pinLen!==l) return l; }
         return "ok"; })(),"ok");
     S={rows:["Asia/Kolkata","Europe/Berlin"],home:"Asia/Kolkata",date:{y:2026,mo:9,d:22},fmt:"12"};
     pinned=null; pinMin=0; pinLen=60;
@@ -1437,7 +1470,46 @@ function selftest(){
      workBand({h:16,mi:0},120),"edge");
   eq("workBand: 15:15 for 1.5 h ends 16:45, working",workBand({h:15,mi:15},90),"biz");
   eq("workBand: 21:00 for 3 h ends past 23:00, off",workBand({h:21,mi:0},180),"off");
-  eq("lenLabel",LEN_OPTS.map(lenLabel).join(" "),"30m 1h 1.5h 2h 3h 4h");
+  eq("lenWords",[15,60,75,240,1440,1500,LEN_MAX].map(lenWords).join(" | "),
+     "15 min | 1 h | 1 h 15 min | 4 h | 1 d | 1 d 1 h | 10 d 16 h");
+  eq("the ceiling is two characters of quarter hours: 256 h",LEN_MAX/60,256);
+  {
+    const ny="America/New_York", at=(h,mi)=>zonedToInstant(2026,9,22,h,mi,ny).instant;
+    eq("spillDays: 11:30 PM for 1.5 h runs into the next day",spillDays(at(23,30),at(23,30)+90*60000,ny),1);
+    eq("spillDays: ending exactly at midnight stays on its own day",spillDays(at(23,0),at(23,0)+60*60000,ny),0);
+    eq("spillDays: 25 h is one day on, 49 h two",
+       spillDays(at(9,0),at(9,0)+25*3600000,ny)+","+spillDays(at(9,0),at(9,0)+49*3600000,ny),"1,2");
+    const S0=S; S={rows:[ny],home:ny,date:{y:2026,mo:9,d:22},fmt:"12"};
+    eq("a multi-day range names its end day and keeps both suffixes",
+       pinSentence(at(9,0),at(9,0)+25*3600000),
+       "Tuesday, 22 September 2026, 9:00 AM\u201310:00 AM (ends Wed 23 Sep) in New York (EDT). "+
+       "[2026-09-22T13:00:00Z/2026-09-23T14:00:00Z]");
+    S=S0;
+  }
+  // start + stop, with -1h / +1h
+  {
+    const M0=pinMin,L0=pinLen, st=()=>pinMin+"/"+pinLen;
+    const at=(m,l,f)=>{ pinMin=m; pinLen=l; f(); return st(); };
+    eq("start keeps the end: 9:00-10:00, start :15 -> 9:15-10:00",
+       at(0,60,()=>setStart(15)),"15/45");
+    eq("start past the end pushes it an hour: 9:30-9:45, start :45 -> 9:45-10:45",
+       at(30,15,()=>setStart(45)),"45/60");
+    eq("stop takes the nearest end: 9:00-10:00, stop :45 -> 9:45",
+       at(0,60,()=>setStop(45)),"0/45");
+    eq("stop :15 from 9:00-10:00 -> 10:15",at(0,60,()=>setStop(15)),"0/75");
+    eq("stop tie stays in the end's hour: 9:00-10:00, stop :30 -> 10:30",
+       at(0,60,()=>setStop(30)),"0/90");
+    eq("stop tie stays in the end's hour: 9:15-10:30, stop :00 -> 10:00",
+       at(15,75,()=>setStop(0)),"15/45");
+    eq("stop never ends before the start: 9:30-9:45, stop :15 -> 10:15",
+       at(30,15,()=>setStop(15)),"30/45");
+    eq("+1h moves the end an hour",at(15,75,()=>nudgeLen(60)),"15/135");
+    eq("-1h stops at the 15 min floor",at(0,45,()=>nudgeLen(-60)),"0/45");
+    eq("+1h reaches the ceiling exactly",at(0,LEN_MAX-60,()=>nudgeLen(60)),"0/"+LEN_MAX);
+    eq("+1h greys out past the ceiling",at(0,LEN_MAX-45,()=>nudgeLen(60)),"0/"+(LEN_MAX-45));
+    eq("stopMin",at(15,75,()=>{})+" -> :"+stopMin(),"15/75 -> :30");
+    pinMin=M0; pinLen=L0;
+  }
 
   // --- calendar file ---
   {
@@ -1626,9 +1698,43 @@ let S=null, pinned=null;
    default is the one thing links leave out -- so a link written before these
    existed still means exactly what it did. */
 let pinMin=0, pinLen=60;
-const LEN_OPTS=[30,60,90,120,180,240];     // the length buttons, in display order
-const LEN_CODE=[60,30,90,120,180,240];     // link encoding: index 0 is the default
-function lenLabel(m){ return m<60?m+"m":(m%60?(m/60).toFixed(1):m/60)+"h"; }
+/* Chosen as start + stop, stored as start + length. The stop quarter sets
+   the minute the meeting ends on; -1h / +1h move that end by whole hours.
+   Length stays the stored quantity because everything downstream wants it:
+   the working-hours test, the link, the calendar file. Quarter hours, from
+   15 min up to 256 h: the link keeps two characters (10 bits, 1024 quarter
+   hours) for a length, and +1h greys out at the top. Something genuinely
+   multi-day -- a hotel stay -- wants a start date and an end date, not a
+   stack of +1h presses, so there is no point encoding more. */
+const LEN_MIN=15, LEN_MAX=1024*15;
+const LEN_CODE=[60,30,90,120,180,240];     // link: the old presets keep their codes
+function clampLen(l){ while(l<LEN_MIN) l+=60; while(l>LEN_MAX) l-=60; return l; }
+function stopMin(){ return (pinMin+pinLen)%60; }
+function lenWords(m){                       // "1 h 15 min", "1 d 1 h", "10 d 16 h"
+  const d=Math.floor(m/1440), h=Math.floor(m%1440/60), r=m%60;
+  return [d?d+" d":"",h?h+" h":"",r?r+" min":""].filter(Boolean).join(" ");
+}
+/* Calendar days a meeting runs past its start day, in one zone's own clock.
+   Counted on the last minute, so a meeting ending exactly at midnight stays
+   on its own day, the way a calendar shows 11 PM-12 AM. */
+function spillDays(t0,t1,tz){
+  const a=wall(t0,tz), b=wall(t1-60000,tz);
+  return Math.round((Date.UTC(b.y,b.mo-1,b.d)-Date.UTC(a.y,a.mo-1,a.d))/86400000);
+}
+/* Start keeps the end where it is, so picking a start never moves the stop
+   you picked. Only when the end would fall before the start (or past the
+   ceiling) does it shift by an hour. */
+function setStart(v){ pinLen=clampLen(pinMin+pinLen-v); pinMin=v; }
+/* Stop moves the end to the nearest time with that minute -- never more than
+   half an hour -- and an exact tie stays in the end's own clock hour, so from
+   9:00-10:00, ":45" gives 9:45 and ":30" gives 10:30. */
+function setStop(v){
+  const e=pinMin+pinLen, base=Math.floor(e/60)*60;
+  let ne=base+v;
+  for(const c of [base-60+v,base+60+v]) if(Math.abs(c-e)<Math.abs(ne-e)) ne=c;
+  pinLen=clampLen(ne-pinMin);
+}
+function nudgeLen(d){ const l=pinLen+d; if(l>=LEN_MIN&&l<=LEN_MAX) pinLen=l; }
 /* The last rendered meeting, for handlers that act on it (calendar, share). */
 let pinSpan=null;
 const WD=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
@@ -1839,8 +1945,10 @@ const PRANK={}; POP.forEach((z,i)=>{ if(PRANK[z]===undefined) PRANK[z]=i; });
      date 14   days from 2024-01-01, so 2024..2068        (only if fD)
      pin   5   column index                               (only if fP)
      rows      per row: 0 + 5 bits POP rank, or 1 + 8 bits ZONES index
-     tail  2+3 meeting start (:00/:15/:30/:45) and length (LEN_CODE index),
-               written only when the pin is not the default 1 h from :00
+     tail  2+3 meeting start (:00/:15/:30/:45) and length: a LEN_CODE index,
+               or 7 then 10 bits -- two characters' worth -- of quarter
+               hours for any other length, up to 256 h.
+               Written only when the pin is not the default 1 h from :00
    Four popular zones with a date and a pin is 54 bits -- 11 characters.
    The tail is read leniently: past the end counts as 0, which is the
    default. So links without it decode exactly as before, and a copy of the
@@ -1876,7 +1984,9 @@ function packState(){
   }
   if(pinned!==null&&(pinMin||pinLen!==60)){
     const li=LEN_CODE.indexOf(pinLen);
-    put(pinMin/15,2); put(li<0?0:li,3);
+    put(pinMin/15,2);
+    if(li>=0) put(li,3);                       // the presets, exactly as before
+    else{ put(7,3); put(pinLen/15-1,10); }     // any other quarter-hour length
   }
   let out="";
   for(let i=0;i<b.length;i+=5) out+=B32[parseInt((b.slice(i,i+5)+"0000").slice(0,5),2)];
@@ -1907,10 +2017,10 @@ function unpackState(str){
     }
     const home=raw[Math.min(hi,raw.length-1)];   // resolve before dedup shifts indices
     const opt=w=>p+w>b.length?0:get(w);          // the lenient tail
-    const mn=opt(2)*15, li=opt(3);
+    const mn=opt(2)*15, li=opt(3), ln=li===7?(opt(10)+1)*15:(LEN_CODE[li]||60);
     return {home:home,rows:[...new Set(raw)],date:date||todayIn(home),
             fmt:["12","24","mx"][fm]||"12",pin:pin,
-            pinMin:pin===null?0:mn, pinLen:pin===null?60:(LEN_CODE[li]||60)};
+            pinMin:pin===null?0:mn, pinLen:pin===null?60:ln};
   }catch(e){ return null; }
 }
 
@@ -1963,7 +2073,8 @@ function loadState(){
         // range-checking needs the column count, so render() does it
         pinned=(q.p!==undefined&&/^\d{1,3}$/.test(q.p))?+q.p:null;
         pinMin=(pinned!==null&&/^(15|30|45)$/.test(q.m||""))?+q.m:0;
-        pinLen=(pinned!==null&&LEN_OPTS.indexOf(+q.l)>=0)?+q.l:60;
+        pinLen=(pinned!==null&&/^\d{2,5}$/.test(q.l||"")&&+q.l%15===0&&
+                +q.l>=LEN_MIN&&+q.l<=LEN_MAX)?+q.l:60;
         return {home,rows,date,fmt:FMTS[q.t]?q.t:"12"};
       }
     }catch(e){}
@@ -2251,21 +2362,30 @@ function render(){
     const seg=(k,vals,cur,lab,tip)=>'<span class="pseg" data-k="'+k+'" title="'+tip+'">'+
       vals.map(v=>'<button'+(v===cur?' class="on"':"")+' data-v="'+v+'">'+lab(v)+
         '</button>').join("")+'</span>';
+    // a meeting that runs into later days names both ends in the heading
+    const hs=spillDays(t0,t1,S.home), he=wall(t1,S.home);
     html+='<div class="pinbar"><span class="plabel">Pinned &middot; '+
-      hw.wd+" "+hw.d+" "+titleMon(hw.mo)+'</span>'+
+      hw.wd+" "+hw.d+(hs&&hw.mo===he.mo?"":" "+titleMon(hw.mo))+
+      (hs?" &ndash; "+he.wd+" "+he.d+" "+titleMon(he.mo):"")+'</span>'+
       /* each label travels with its buttons, so a narrow bar wraps between
-         the two groups rather than stranding "length" at the end of a line */
+         the groups rather than stranding a label at the end of a line */
       '<span class="pinctl"><span class="pgrp"><em>start</em>'+
         seg("m",[0,15,30,45],pinMin,v=>":"+pad(v),"Minutes past the pinned hour")+'</span>'+
-        '<span class="pgrp"><em>length</em>'+
-        seg("l",LEN_OPTS,pinLen,lenLabel,"Meeting length")+'</span></span>'+
+        '<span class="pgrp"><em>stop</em>'+
+        seg("s",[0,15,30,45],stopMin(),v=>":"+pad(v),"Minute the meeting ends on")+'</span>'+
+        '<span class="pgrp"><em>length</em><span class="plen">'+
+          '<button data-len="-60"'+(pinLen-60<LEN_MIN?" disabled":"")+
+            ' title="End one hour earlier">&minus;1h</button>'+
+          '<b>'+lenWords(pinLen)+'</b>'+
+          '<button data-len="60"'+(pinLen+60>LEN_MAX?" disabled":"")+
+            ' title="End one hour later">+1h</button></span></span></span>'+
       '<span class="spacer"></span>'+
       '<span class="pinlegend"><em><i style="background:var(--biz)"></i>9&ndash;5</em>'+
       '<em><i style="background:#e0a340"></i>fringe</em>'+
       '<em><i style="background:#93a4b8"></i>off hours</em></span>'+
       '<span class="lk" id="unpin">Clear pin</span>'+
       '<div class="pinchips">'+S.rows.map(tz=>{
-        const w=wall(t0,tz), e=wall(t1,tz), r24=uses24(tz);
+        const w=wall(t0,tz), e=wall(t1,tz), r24=uses24(tz), sp=spillDays(t0,t1,tz);
         // the whole meeting is tested, not just its first hour
         const band="w-"+workBand(w,pinLen);
         const we=w.wd==="Sat"||w.wd==="Sun";
@@ -2273,6 +2393,7 @@ function render(){
         const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
         return '<span class="pinchip '+(we?"w-off":band)+'" style="background:'+
           hourColor(w.h,w.mi)+'"><b>'+cityOf(tz)+'</b> '+hhmm(w,r24)+"&ndash;"+hhmm(e,r24)+
+          (sp?'<sup class="dplus" title="Ends '+shortDate(e)+'">+'+sp+'d</sup>':"")+
           (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
           (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
       }).join("")+'</div>'+
@@ -2326,9 +2447,11 @@ function colAt(x,y){
 document.addEventListener("pointermove",function(e){
   if(!selDrag) return;
   const c=colAt(e.clientX,e.clientY); if(c===null) return;
-  // capped at 4 h, measured from where the drag began, in either direction
-  const a=c<selDrag.s?Math.max(c,selDrag.s-3):selDrag.s;
-  const b=c<selDrag.s?selDrag.s:Math.min(c,selDrag.s+3);
+  // anchored where the drag began, in either direction; the grid (one day)
+  // is the practical limit, the ceiling only a formality
+  const cap=Math.floor(LEN_MAX/60)-1;
+  const a=c<selDrag.s?Math.max(c,selDrag.s-cap):selDrag.s;
+  const b=c<selDrag.s?selDrag.s:Math.min(c,selDrag.s+cap);
   if(a!==selDrag.a||b!==selDrag.b){ selDrag.a=a; selDrag.b=b; placeOverlays(); }
 });
 /* ---------- keyboard ----------
@@ -2599,9 +2722,10 @@ function placeOverlays(){
     if(!head||!cells.length||!end) return;
     const a=head.getBoundingClientRect(), b=cells[cells.length-1].getBoundingClientRect(),
           z=end.getBoundingClientRect();
-    const x0=X(a)+a.width*startMin/60, x1=Math.min(x0+a.width*lenMin/60, X(z)+z.width);
+    const x0=X(a)+a.width*startMin/60, full=x0+a.width*lenMin/60, x1=Math.min(full,X(z)+z.width);
     const d=document.createElement("div");
-    d.className=cls;
+    // runs on past the displayed day: leave the right side open
+    d.className=cls+(full>X(z)+z.width+0.5?" cont":"");
     d.style.left=x0+"px"; d.style.top=Y(a)+"px";
     d.style.width=Math.max(4,x1-x0)+"px"; d.style.height=(b.bottom-a.top)+"px";
     gw.appendChild(d);
@@ -2691,8 +2815,11 @@ function wire(){
     pinned=+a.dataset.best; saveState(); render();
   });
   $$(".pseg button").forEach(b=>b.onclick=()=>{
-    if(b.parentNode.dataset.k==="m") pinMin=+b.dataset.v; else pinLen=+b.dataset.v;
+    if(b.parentNode.dataset.k==="m") setStart(+b.dataset.v); else setStop(+b.dataset.v);
     saveState(); render();
+  });
+  $$(".plen button").forEach(b=>b.onclick=()=>{
+    nudgeLen(+b.dataset.len); saveState(); render();
   });
   const pc=$("#psCopy"); if(pc) pc.onclick=()=>{
     const txt=$("#psText").textContent, keep=pc.textContent;
