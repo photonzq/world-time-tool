@@ -261,6 +261,35 @@ button.ui.on{background:var(--accent);border-color:var(--accent);color:#fff}
 .c.pin,.hc.pin{box-shadow:inset 0 0 0 99px rgba(31,41,51,.045)}
 .pinbox{position:absolute;border:1.5px solid #7c8b9c;border-radius:8px;
   pointer-events:none;z-index:2}
+/* least-bad hour marker on the ruler */
+.hc .bstar{color:#e0a340;font-size:9px;margin-right:1px}
+.bestline{color:#8a5a00}
+.bestline a{margin-left:4px;font-weight:bold}
+/* DST drift: the gap to home changes within 8 weeks of the pinned date */
+.drift{flex:1 0 100%;font-size:11.5px;line-height:1.55;color:#7a5200;
+  background:#fff7e6;border:1px solid #f1d9a6;border-radius:6px;padding:5px 9px}
+/* keyboard hint in the footer (desktop only) */
+.kbd{letter-spacing:.2px}
+/* undo toast: fixed, outside #app, so re-renders leave it alone */
+.toast{position:fixed;left:50%;bottom:18px;transform:translate(-50%,16px);opacity:0;
+  background:#1f2933;color:#fff;border-radius:8px;padding:9px 12px 9px 14px;
+  font-size:12.5px;display:flex;gap:14px;align-items:center;z-index:100;
+  box-shadow:0 6px 20px rgba(16,32,55,.25);pointer-events:none;
+  transition:opacity .15s,transform .15s}
+.toast.show{opacity:1;transform:translate(-50%,0);pointer-events:auto}
+.tbtn{font-family:inherit;font-size:12.5px;font-weight:bold;color:#9cc3ff;
+  background:none;border:none;cursor:pointer;padding:4px 2px}
+/* reorder: the lifted row, and the line where it will land */
+.row.reo{position:relative;z-index:30;box-shadow:0 6px 18px rgba(16,32,55,.22);
+  background:#fff;opacity:.94}
+.reoline{position:fixed;height:3px;background:var(--accent);border-radius:2px;
+  z-index:120;pointer-events:none}
+.acts button[data-up]{cursor:grab}
+/* a held label must not pop the iOS text callout or start a selection */
+.row:not(.hdr) .lab{-webkit-touch-callout:none;-webkit-user-select:none;user-select:none}
+/* the span being dragged out, before it becomes a pin */
+.selbox{position:absolute;border:1.5px dashed var(--accent);border-radius:8px;
+  background:rgba(47,111,208,.06);pointer-events:none;z-index:2}
 .c.allbiz::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;
   background:var(--biz)}
 
@@ -290,6 +319,21 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
 .pinsent span{flex:1;min-width:0;font-size:11.5px;color:#4b5763;line-height:1.45;
   font-style:italic}
 .pinsent button{flex:0 0 auto}
+.pinbtns{display:flex;gap:6px;flex:0 0 auto}
+/* chips get a line of their own under the controls */
+.pinchips{flex:1 0 100%;display:flex;flex-wrap:wrap;gap:8px}
+/* meeting start and length: small segmented controls in the pinned bar */
+.pinctl{display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.pgrp{display:inline-flex;align-items:center;gap:6px;white-space:nowrap}
+.pinctl em{font-style:normal;font-size:10.5px;color:var(--muted)}
+.pseg{display:inline-flex;border:1px solid var(--line);border-radius:6px;
+  overflow:hidden;background:#fff}
+.pseg button{font-family:inherit;font-size:11px;font-weight:bold;cursor:pointer;
+  border:none;border-left:1px solid var(--line);background:#fff;color:#7b8794;
+  padding:4px 7px;line-height:1.2}
+.pseg button:first-child{border-left:none}
+.pseg button:hover{background:#f4f7fb;color:var(--text)}
+.pseg button.on{background:var(--accent);color:#fff}
 .webadge{display:inline-block;margin-left:6px;font-size:8.5px;font-weight:bold;
   letter-spacing:.5px;color:#7a5bb5;border:1px solid #cfc0ea;background:#f4efff;
   border-radius:4px;padding:1px 4px;vertical-align:1px}
@@ -479,7 +523,12 @@ footer{padding:9px 16px;border-top:1px solid var(--line);background:#fafbfd;
      and can use the full width instead of being pushed along by it */
   .plabel{flex:1 0 100%;margin-bottom:1px}
   .pinchip{padding:4px 7px 4px 6px;font-size:11.5px}
-  .pinsent{gap:8px;padding-top:6px}
+  .pinsent{gap:8px;padding-top:6px;flex-wrap:wrap}
+  .pinsent span#psText{flex:1 0 100%}
+  /* ~30px targets: these are the controls a thumb actually uses here */
+  .pseg button{padding:7px 8px;font-size:11.5px}
+  .pinctl{flex:1 0 100%;row-gap:6px}
+  .drift{font-size:11px;padding:4px 8px}
   .pinsent span{font-size:11px;display:-webkit-box;-webkit-line-clamp:2;
     -webkit-box-orient:vertical;overflow:hidden}
 }
@@ -594,6 +643,108 @@ const ALIASES={
   "Europe/London":"UK Britain England","Asia/Seoul":"Korea","Asia/Kolkata":"India"
 };
 
+/* Cities and regions that are not zone ids of their own and so could not be
+   found by name: "Houston", "Munich", "Bombay", "California", "NYC". Only
+   places whose time is unambiguous. A state split between zones goes to the
+   one most of its people use (Florida, Tennessee). Names that also belong to
+   another place are left out when they would rank the wrong one first --
+   Georgia the country, Jersey the island, and "New Mexico", which would put
+   Denver above Mexico City for a search of "mexico". */
+const CITIES={
+"America/New_York":"NYC Manhattan Brooklyn Washington DC Orlando Tampa Jacksonville "+
+  "Charlotte Raleigh Pittsburgh Baltimore Cleveland Columbus Cincinnati Buffalo Richmond "+
+  "Newark Hartford Florida Ohio Pennsylvania Massachusetts Virginia Maryland Connecticut "+
+  "New Jersey North Carolina South Carolina Maine Vermont New Hampshire Rhode Island Delaware",
+"America/Chicago":"Houston Dallas Austin San Antonio Fort Worth Minneapolis St Louis "+
+  "Saint Louis Kansas City Milwaukee Nashville Memphis New Orleans Oklahoma City Omaha "+
+  "Tulsa Des Moines Madison Texas Illinois Minnesota Wisconsin Missouri Iowa Louisiana "+
+  "Tennessee Alabama Mississippi Oklahoma Kansas Nebraska Arkansas",
+"America/Denver":"Salt Lake City Albuquerque El Paso Colorado Springs Colorado Utah "+
+  "Wyoming Montana",
+"America/Boise":"Idaho",
+"America/Detroit":"Michigan Grand Rapids Ann Arbor",
+"America/Phoenix":"Tucson Scottsdale Mesa",
+"America/Los_Angeles":"SF LA Bay Area Silicon Valley San Jose Oakland Sacramento "+
+  "Las Vegas Palo Alto Cupertino Hollywood California Oregon Nevada Washington State",
+"Pacific/Honolulu":"Maui Oahu",
+"America/Toronto":"Ottawa Montreal Ontario Quebec",
+"America/Vancouver":"British Columbia",
+"America/Edmonton":"Calgary Alberta",
+"America/Winnipeg":"Manitoba",
+"America/Halifax":"Nova Scotia New Brunswick Prince Edward Island",
+"America/Regina":"Saskatoon",
+"America/Mexico_City":"CDMX Puebla",
+"America/Sao_Paulo":"Rio de Janeiro Belo Horizonte Curitiba Porto Alegre",
+"America/Buenos_Aires":"Rosario",
+"America/Bogota":"Medellin Cali Cartagena Barranquilla",
+"America/Lima":"Cusco Cuzco Arequipa",
+"America/Santiago":"Valparaiso",
+"America/Panama":"Panama City",
+"America/Puerto_Rico":"San Juan",
+"Europe/London":"Manchester Birmingham Liverpool Leeds Glasgow Bristol Cardiff Belfast "+
+  "Oxford Newcastle Sheffield",
+"Europe/Dublin":"Cork Galway Limerick",
+"Europe/Berlin":"Frankfurt Hamburg Cologne Koln Dusseldorf Stuttgart Leipzig Dresden "+
+  "Hanover Nuremberg Bonn Bremen",
+"Europe/Paris":"Lyon Marseille Toulouse Nice Bordeaux Lille Nantes Strasbourg",
+"Europe/Madrid":"Barcelona Valencia Seville Sevilla Malaga Bilbao",
+"Europe/Rome":"Milan Milano Naples Napoli Turin Torino Florence Firenze Venice Venezia "+
+  "Bologna Genoa Palermo",
+"Europe/Amsterdam":"Rotterdam The Hague Den Haag Utrecht Eindhoven",
+"Europe/Brussels":"Antwerp Ghent Bruges Liege",
+"Europe/Zurich":"Geneva Basel Lausanne Lucerne",
+"Europe/Vienna":"Salzburg Graz Innsbruck",
+"Europe/Stockholm":"Gothenburg Goteborg Malmo Uppsala",
+"Europe/Oslo":"Bergen Trondheim Stavanger",
+"Europe/Copenhagen":"Aarhus Odense",
+"Europe/Helsinki":"Espoo Tampere Turku",
+"Europe/Warsaw":"Krakow Cracow Gdansk Wroclaw Poznan Lodz",
+"Europe/Prague":"Brno",
+"Europe/Lisbon":"Porto Oporto Faro",
+"Europe/Athens":"Thessaloniki",
+"Europe/Istanbul":"Ankara Izmir Antalya Bursa",
+"Europe/Moscow":"Saint Petersburg Kazan Sochi Nizhny Novgorod",
+"Europe/Kiev":"Lviv Odesa Odessa Kharkiv Dnipro",
+"Asia/Calcutta":"Bombay Delhi Hyderabad Madras Pune Ahmedabad Jaipur Surat Lucknow "+
+  "Kochi Cochin Goa Noida Gurgaon Gurugram Chandigarh",
+"Asia/Karachi":"Lahore Faisalabad Rawalpindi Peshawar",
+"Asia/Dhaka":"Chittagong",
+"Asia/Katmandu":"Pokhara",
+"Asia/Shanghai":"Chengdu Hangzhou Wuhan Nanjing Xian Tianjin Suzhou Dongguan Qingdao "+
+  "Shenyang Harbin Kunming Xiamen Dalian",
+"Asia/Taipei":"Kaohsiung Taichung Hsinchu",
+"Asia/Tokyo":"Kyoto Yokohama Nagoya Kobe Fukuoka Hiroshima Sendai Okinawa",
+"Asia/Seoul":"Busan Incheon Daegu Daejeon Gwangju",
+"Asia/Kuala_Lumpur":"KL Penang Johor",
+"Asia/Jakarta":"Surabaya Bandung Java",
+"Asia/Makassar":"Bali Denpasar",
+"Asia/Manila":"Cebu Davao Quezon",
+"Asia/Bangkok":"Phuket Chiang Mai Pattaya",
+"Asia/Saigon":"Saigon HCMC Da Nang",
+"Asia/Dubai":"Sharjah",
+"Asia/Qatar":"Doha",
+"Asia/Bahrain":"Manama",
+"Asia/Riyadh":"Jeddah Mecca Makkah Medina Dammam",
+"Asia/Jerusalem":"Tel Aviv Haifa Eilat",
+"Asia/Tehran":"Isfahan Shiraz Mashhad",
+"Asia/Baghdad":"Basra Erbil",
+"Asia/Tashkent":"Samarkand",
+"Australia/Sydney":"New South Wales NSW Newcastle Wollongong Australian Capital Territory",
+"Australia/Melbourne":"Victoria Geelong",
+"Australia/Brisbane":"Queensland Gold Coast Cairns Townsville",
+"Australia/Perth":"Western Australia",
+"Australia/Adelaide":"South Australia",
+"Australia/Darwin":"Northern Territory",
+"Australia/Hobart":"Tasmania",
+"Pacific/Auckland":"Christchurch Queenstown Dunedin",
+"Africa/Johannesburg":"Cape Town Durban Soweto",
+"Africa/Lagos":"Abuja Ibadan Kano",
+"Africa/Cairo":"Alexandria Giza Sharm el Sheikh",
+"Africa/Nairobi":"Mombasa",
+"Africa/Casablanca":"Marrakech Marrakesh Rabat Fes Fez Tangier",
+"Africa/Accra":"Kumasi"
+};
+
 /* The Windows list (139, nicely labelled) merged with everything else the
    engine's ICU knows. ICU lists no Etc/* zones, but whether it spells a zone
    the legacy way (Asia/Calcutta, as Windows does) or the canonical way
@@ -613,8 +764,11 @@ function catalog(){
     if(seen.has(id)||(TZALIAS[id]&&seen.has(TZALIAS[id]))) return;
     let off; try{ off=offsetAt(now,id); }catch(e){ return; }
     seen.add(id);
-    out.push([label,id,(label+" "+id.split("/").join(" ").split("_").join(" ")+
-      " "+(ALIASES[id]||"")).toLowerCase(),off,""]);
+    // names attach under either spelling: ICU may call Saigon Ho_Chi_Minh
+    const al=TZALIAS[id],
+          more=[ALIASES[id],ALIASES[al],CITIES[id],CITIES[al]].filter(Boolean).join(" ");
+    out.push([label,id,fold(label+" "+id.split("/").join(" ").split("_").join(" ")+" "+more),
+      off,""]);
   };
   for(const z of ZONES) add(z[0],z[1]);
   let extra=[]; try{ extra=Intl.supportedValuesOf("timeZone"); }catch(e){}
@@ -635,6 +789,13 @@ function enrichAbbrs(){
     const a1=abbrOf(JAN,z[1]),a2=abbrOf(JUL,z[1]);
     z[4]=a1===a2?a1:(z[3]===offsetAt(JAN,z[1])?a1:a2);
     z[2]+=" "+(a1===a2?a1:a1+" "+a2).toLowerCase();
+    /* ICU's long names too -- "Gulf Standard Time", "India Standard Time",
+       "Central European Summer Time" -- so "gulf", "arabian" or "central
+       european" find their zones. The formatters are already cached above.
+       Skipped where ICU has no name and falls back to "GMT+08:00". */
+    const l1=icuName(JAN,z[1],"long",_al), l2=icuName(JUL,z[1],"long",_al);
+    for(const l of l1===l2?[l1]:[l1,l2])
+      if(l&&!/^GMT[+-]/.test(l)) z[2]+=" "+l.toLowerCase();
   }
   ABBRS=true;
   if(onAbbrs) onAbbrs();
@@ -687,6 +848,17 @@ function seasonOffs(z){
    the text match is where the trap is: "gmt+8" literally names Etc/GMT+8,
    and POSIX inverts the sign of the Etc zones, so that one is UTC-8. It stays
    findable, below the real UTC+8 zones and labelled with its true offset. */
+/* An offset search shows the offset it matched, not the label's standard one:
+   "utc+1" in summer lists London as UTC+01:00, which is why it matched,
+   rather than the UTC+00:00 its Windows label carries. Rows that matched by
+   text alone (Etc/GMT+8 for "gmt+8") keep their own label, true offset and all. */
+function utcTag(m){
+  const a=Math.abs(m);
+  return "(UTC"+(m<0?"-":"+")+pad(Math.floor(a/60))+":"+pad(a%60)+")";
+}
+function offTagFor(z,offQ){
+  return offQ!==null&&(z[3]===offQ||seasonOffs(z).indexOf(offQ)>=0)?utcTag(offQ):utcPart(z[0]);
+}
 function searchZones(raw){
   const C=catalog();
   const v=fold(String(raw).trim());
@@ -781,7 +953,8 @@ const TZALIAS={};
  ["Asia/Katmandu","Asia/Kathmandu"],
  ["Asia/Rangoon","Asia/Yangon"],
  ["Europe/Kiev","Europe/Kyiv"],
- ["Etc/UTC","UTC"]].forEach(function(pr){
+ ["Etc/UTC","UTC"],
+ ["Asia/Saigon","Asia/Ho_Chi_Minh"]].forEach(function(pr){
    TZALIAS[pr[0]]=pr[1]; TZALIAS[pr[1]]=pr[0];
  });
 /* Identity on engines that do not canonicalise, which is exactly the case
@@ -842,21 +1015,32 @@ function clockWords(w,h24){
   const h=w.h%12===0?12:w.h%12;
   return h+":"+pad(w.mi)+(w.h<12?" AM":" PM");
 }
-function pinSentence(t){
-  const hw=wall(t,S.home);
-  const head=longDate(t,S.home)+" at "+clockWords(hw,uses24(S.home))+
-    " in "+cityOf(S.home)+" ("+abbrOf(t,S.home)+")";
+/* "9:15–10:15 AM" when both ends share a half of the day, "11:30 AM–12:30 PM"
+   when they do not; 24-hour clocks never need the suffix. */
+function clockRange(a,b,h24){
+  if(h24) return pad(a.h)+":"+pad(a.mi)+"\u2013"+pad(b.h)+":"+pad(b.mi);
+  const hm=w=>(w.h%12===0?12:w.h%12)+":"+pad(w.mi), ap=w=>w.h<12?"AM":"PM";
+  return ap(a)===ap(b)?hm(a)+"\u2013"+hm(b)+" "+ap(b)
+                      :hm(a)+" "+ap(a)+"\u2013"+hm(b)+" "+ap(b);
+}
+/* The UTC stamp is an ISO 8601 interval, start/end, so anything parsing the
+   sentence gets the meeting unambiguously, length included. */
+function pinSentence(t0,t1){
+  const hw=wall(t0,S.home), he=wall(t1,S.home);
+  const head=longDate(t0,S.home)+", "+clockRange(hw,he,uses24(S.home))+
+    " in "+cityOf(S.home)+" ("+abbrOf(t0,S.home)+")";
   const others=S.rows.filter(z=>z!==S.home).map(tz=>{
-    const w=wall(t,tz);
+    const w=wall(t0,tz), e=wall(t1,tz);
     const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
-    return clockWords(w,uses24(tz))+" in "+cityOf(tz)+" ("+abbrOf(t,tz)+")"+
+    return clockRange(w,e,uses24(tz))+" in "+cityOf(tz)+" ("+abbrOf(t0,tz)+")"+
       (sameDay?"":" on "+shortDate(w));
   });
   let s=head;
   if(others.length===1) s+=" is "+others[0];
   else if(others.length>1)
     s+=" is "+others.slice(0,-1).join(", ")+" and "+others[others.length-1];
-  return s+". ["+new Date(t).toISOString().replace(".000","")+"]";
+  const iso=t=>new Date(t).toISOString().replace(".000","");
+  return s+". ["+iso(t0)+"/"+iso(t1)+"]";
 }
 /* ISO-8601 week: weeks start Monday and week 1 is the one holding the year's
    first Thursday. The ISO year can differ from the calendar year at the
@@ -1196,6 +1380,117 @@ function selftest(){
   eq("half-hour zone: 8:30 slot starts before 9, so fringe",wb(8,30),"edge");
   eq("quarter-hour zone: 16:45 slot is fringe",wb(16,45),"edge");
 
+  // --- more names: cities, states, ICU long names ---
+  eq("every CITIES key is a zone the catalogue has (under either spelling)",
+     Object.keys(CITIES).filter(k=>!C.some(z=>z[1]===k||z[1]===TZALIAS[k])).join(","),"");
+  eq("city search: houston -> Chicago",top("houston")[0],"America/Chicago");
+  eq("city search: bombay -> India",top("bombay")[0],"Asia/Calcutta");
+  eq("city search: nyc -> New York",top("nyc")[0],"America/New_York");
+  eq("city search: sf -> Los Angeles",top("sf")[0],"America/Los_Angeles");
+  eq("city search: frankfurt -> Berlin",top("frankfurt")[0],"Europe/Berlin");
+  eq("city search: tel aviv -> Jerusalem",top("tel aviv")[0],"Asia/Jerusalem");
+  eq("region search: california -> Los Angeles",top("california")[0],"America/Los_Angeles");
+  eq("region search: texas -> Chicago",top("texas")[0],"America/Chicago");
+  eq("region search: queensland -> Brisbane",top("queensland")[0],"Australia/Brisbane");
+  eq("collision guard: 'mexico' still leads with Mexico City",
+     top("mexico")[0],"America/Mexico_City");
+  eq("collision guard: 'wales' leads with London, not New South Wales",
+     top("wales")[0],"Europe/London");
+  eq("ICU long name: gulf -> Dubai",top("gulf")[0],"Asia/Dubai");
+  eq("ICU long name: arabian finds Riyadh",
+     searchZones("arabian").some(z=>z[1]==="Asia/Riyadh"),true);
+  eq("offset label: an offset match shows the offset it matched",
+     offTagFor(C.find(z=>z[1]==="Europe/London"),60),"(UTC+01:00)");
+  eq("offset label: a text-only match keeps its true label",
+     offTagFor(C.find(z=>z[1]==="Etc/GMT+8"),480),"(UTC-08:00)");
+  eq("utcTag formats negative half hours",utcTag(-210),"(UTC-03:30)");
+
+  // --- meeting length and start (links, bands, sentence) ---
+  {
+    const S0=S,P0=pinned,M0=pinMin,L0=pinLen;
+    const R=["America/New_York","Europe/Berlin","Asia/Tokyo"];
+    S={rows:R,home:R[0],date:{y:2026,mo:9,d:22},fmt:"12"}; pinned=9;
+    eq("default meeting writes no link tail",(pinMin=0,pinLen=60,packState()),"99GV3900OK");
+    eq("a link from before the tail existed decodes to the default meeting",
+       (u=>u.pin+"|"+u.pinMin+"|"+u.pinLen)(unpackState("9PGV2E00GC8")),"14|0|60");
+    eq("every start x length combination round-trips",(()=>{
+        for(const m of [0,15,30,45]) for(const l of LEN_OPTS){
+          pinMin=m; pinLen=l; const u=unpackState(packState());
+          if(!u||u.pinMin!==m||u.pinLen!==l) return m+"/"+l; }
+        return "ok"; })(),"ok");
+    S={rows:["Asia/Kolkata","Europe/Berlin"],home:"Asia/Kolkata",date:{y:2026,mo:9,d:22},fmt:"12"};
+    pinned=null; pinMin=0; pinLen=60;
+    eq("a row spelled Asia/Kolkata still packs (as Asia/Calcutta)",
+       (x=>x&&unpackState(x).rows[0])(packState()),"Asia/Calcutta");
+    S={rows:R,home:R[0],date:{y:2026,mo:9,d:22},fmt:"12"};
+    const t0=Date.UTC(2026,8,22,13,15), t1=t0+90*60000;
+    eq("sentence states the range and an ISO interval",pinSentence(t0,t1),
+       "Tuesday, 22 September 2026, 9:15\u201310:45 AM in New York (EDT) is "+
+       "3:15\u20134:45 PM in Berlin (CEST) and 10:15\u201311:45 PM in Tokyo (JST). "+
+       "[2026-09-22T13:15:00Z/2026-09-22T14:45:00Z]");
+    S=S0; pinned=P0; pinMin=M0; pinLen=L0;
+  }
+  eq("clockRange crosses noon with both suffixes",
+     clockRange({h:11,mi:30},{h:12,mi:30},false),"11:30 AM\u201312:30 PM");
+  eq("clockRange 24-hour",clockRange({h:9,mi:0},{h:10,mi:30},true),"09:00\u201310:30");
+  eq("workBand: a 2 h meeting at 16:00 is fringe though the hour is green",
+     workBand({h:16,mi:0},120),"edge");
+  eq("workBand: 15:15 for 1.5 h ends 16:45, working",workBand({h:15,mi:15},90),"biz");
+  eq("workBand: 21:00 for 3 h ends past 23:00, off",workBand({h:21,mi:0},180),"off");
+  eq("lenLabel",LEN_OPTS.map(lenLabel).join(" "),"30m 1h 1.5h 2h 3h 4h");
+
+  // --- calendar file ---
+  {
+    const t0=Date.UTC(2026,8,22,13,15), t1=Date.UTC(2026,8,22,14,45);
+    const ics=icsText(t0,t1,"Meeting",
+      "9:15\u201310:45 AM in New York, 3:15\u20134:45 PM in Berlin; ok","https://x.test/#AB12");
+    const lines=ics.split("\r\n"), unf=ics.replace(/\r\n /g,"");
+    eq("ics: CRLF line endings throughout",ics.replace(/\r\n/g,"").indexOf("\n"),-1);
+    eq("ics: starts and ends as a calendar",lines[0]+"|"+lines[lines.length-2],
+       "BEGIN:VCALENDAR|END:VCALENDAR");
+    eq("ics: DTSTART in UTC",lines.indexOf("DTSTART:20260922T131500Z")>0,true);
+    eq("ics: DTEND in UTC",lines.indexOf("DTEND:20260922T144500Z")>0,true);
+    eq("ics: no line over 75 octets",
+       lines.every(l=>new TextEncoder().encode(l).length<=75),true);
+    eq("ics: commas and semicolons escaped",
+       unf.indexOf("New York\\, 3:15")>0&&unf.indexOf("Berlin\\; ok")>0,true);
+  }
+  eq("foldIcs: unfolding restores a long multi-byte line",(()=>{
+      const L="DESCRIPTION:"+"\u00e9\u2013x".repeat(40);
+      return foldIcs(L).replace(/\r\n /g,"")===L; })(),true);
+
+  // --- DST drift (9:00 New York, weekly, 8 weeks from Tue 22 Sep 2026) ---
+  {
+    const S0=S;
+    S={rows:["America/New_York","Europe/Berlin","Australia/Sydney","America/Chicago",
+             "America/Phoenix"],home:"America/New_York",date:{y:2026,mo:9,d:22},fmt:"12"};
+    _driftKey="";
+    const d=driftNotes(zonedToInstant(2026,9,22,9,0,"America/New_York").instant);
+    const of=c=>d.find(x=>x.indexOf(c+":")===0);
+    eq("drift: Berlin, one week in late October",of("Berlin"),
+       "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week");
+    eq("drift: Sydney changes twice",of("Sydney"),
+       "Sydney: gap to New York rises to 15 h from Sun 4 Oct, then 16 h from Sun 1 Nov");
+    eq("drift: Phoenix, which keeps no DST",of("Phoenix"),
+       "Phoenix: gap to New York drops to 2 h from Sun 1 Nov");
+    eq("drift: Chicago moves with New York, no note",of("Chicago"),undefined);
+    _driftKey="";
+    eq("drift: March gives the three-week window",
+       driftNotes(zonedToInstant(2026,3,2,9,0,"America/New_York").instant)
+         .find(x=>x.indexOf("Berlin:")===0),
+       "Berlin: gap to New York drops to 5 h from Sun 8 Mar, for 3 weeks");
+    S=S0; _driftKey="";
+  }
+  eq("gapWords: whole, half and quarter hours",
+     gapWords(300)+"|"+gapWords(-570)+"|"+gapWords(345),"5 h|9.5 h|5 h 45 min");
+
+  // --- least-bad slots ---
+  eq("hourCost: working, fringe, late, asleep",
+     [10,8,20,21.5,23,3].map(hourCost).join(","),"0,1,2,3,4,6");
+  eq("slotCost: a 9:30 slot is all inside 9-5",slotCost({h:9,mi:30,wd:"Tue"}),0);
+  eq("slotCost: 16:30 pays for its last half hour",slotCost({h:16,mi:30,wd:"Tue"}),0.5);
+  eq("slotCost: a weekend hour costs extra",slotCost({h:10,mi:0,wd:"Sat"}),4);
+
   // --- resizable frozen column ---
   eq("label width clamps below the minimum",clampLabW(10),LABW_MIN);
   eq("label width clamps above the maximum",clampLabW(9999),LABW_MAX);
@@ -1326,6 +1621,133 @@ function selftest(){
    ============================================================ */
 const LS="wtb.state.v1";
 let S=null, pinned=null;
+/* A pin is a meeting, not an instant: it starts pinMin minutes into the pinned
+   column and runs pinLen minutes. One hour from :00 is the default, and the
+   default is the one thing links leave out -- so a link written before these
+   existed still means exactly what it did. */
+let pinMin=0, pinLen=60;
+const LEN_OPTS=[30,60,90,120,180,240];     // the length buttons, in display order
+const LEN_CODE=[60,30,90,120,180,240];     // link encoding: index 0 is the default
+function lenLabel(m){ return m<60?m+"m":(m%60?(m/60).toFixed(1):m/60)+"h"; }
+/* The last rendered meeting, for handlers that act on it (calendar, share). */
+let pinSpan=null;
+const WD=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+function dayWords(dt){
+  return WD[new Date(Date.UTC(dt.y,dt.mo-1,dt.d)).getUTCDay()]+" "+dt.d+" "+titleMon(dt.mo);
+}
+
+/* ---------- calendar file ----------
+   RFC 5545, built in the page and handed over as a download; no service is
+   involved. Times are written in UTC (the trailing Z), which every calendar
+   converts to its own zone, so no VTIMEZONE block is needed. */
+function icsText(t0,t1,summary,desc,url){
+  const tx=v=>String(v).replace(/\\/g,"\\\\").replace(/;/g,"\\;")
+    .replace(/,/g,"\\,").replace(/\r?\n/g,"\\n");
+  const st=t=>new Date(t).toISOString().replace(/[-:]/g,"").replace(/\.\d{3}/,"");
+  const L=["BEGIN:VCALENDAR","VERSION:2.0","PRODID:-//World Time Tool//EN",
+    "CALSCALE:GREGORIAN","METHOD:PUBLISH","BEGIN:VEVENT",
+    "UID:"+st(t0)+"-"+Math.random().toString(36).slice(2,10)+"@world-time-tool",
+    "DTSTAMP:"+st(Date.now()),"DTSTART:"+st(t0),"DTEND:"+st(t1),
+    "SUMMARY:"+tx(summary),"DESCRIPTION:"+tx(desc)];
+  if(url) L.push("URL:"+url);
+  L.push("END:VEVENT","END:VCALENDAR");
+  return L.map(foldIcs).join("\r\n")+"\r\n";
+}
+/* Lines over 75 octets fold onto CRLF plus a space. Octets, not characters:
+   the en dash in a time range is three bytes of UTF-8. */
+function foldIcs(line){
+  const enc=new TextEncoder(), parts=[];
+  let cur="", n=0, lim=75;
+  for(const ch of line){
+    const b=enc.encode(ch).length;
+    if(n+b>lim){ parts.push(cur); cur=""; n=0; lim=74; }   // 74 + the leading space
+    cur+=ch; n+=b;
+  }
+  parts.push(cur);
+  return parts.join("\r\n ");
+}
+function downloadIcs(txt,name){
+  const a=document.createElement("a");
+  a.href=URL.createObjectURL(new Blob([txt],{type:"text/calendar;charset=utf-8"}));
+  a.download=name;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href),2000);
+}
+
+/* ---------- native share ----------
+   Phones get their own share sheet (Messages, WhatsApp, Mail). Desktops keep
+   copying: navigator.share exists there too, but the OS sheet is a detour
+   from the paste people actually want. */
+function canShare(){
+  return !!navigator.share&&(touchMode||
+    (!!window.matchMedia&&matchMedia("(pointer:coarse)").matches));
+}
+
+/* ---------- DST drift ----------
+   A recurring meeting stays fixed in the home clock, so every week it lands
+   at the same home time. Where another zone changes its clocks on a different
+   date, the gap between the two moves -- for three weeks in March and one in
+   October/November between New York and Europe. Walk the next 8 weeks a day
+   at a time at the pinned home time and describe each zone's changes. */
+let _driftKey="", _driftVal=[];
+function gapWords(m){
+  const a=Math.abs(m), h=Math.floor(a/60), r=a%60;
+  return r===0?h+" h":r===30?h+".5 h":h+" h "+r+" min";
+}
+function spanWords(d){
+  return d%7===0?(d===7?"one week":d/7+" weeks"):(d===1?"one day":d+" days");
+}
+function driftNotes(t0){
+  const key=S.home+"|"+S.rows.join(",")+"|"+t0;
+  if(key===_driftKey) return _driftVal;
+  const hw=wall(t0,S.home), days=[];
+  for(let k=0;k<=56;k++){
+    const dt=addDays({y:hw.y,mo:hw.mo,d:hw.d},k);
+    const t=zonedToInstant(dt.y,dt.mo,dt.d,hw.h,hw.mi,S.home).instant;
+    days.push({dt:dt,t:t,ho:offsetAt(t,S.home)});
+  }
+  const notes=[];
+  for(const tz of S.rows){
+    if(tz===S.home) continue;
+    const g=days.map(d=>offsetAt(d.t,tz)-d.ho), ch=[];
+    for(let k=1;k<g.length;k++) if(g[k]!==g[k-1]) ch.push(k);
+    if(!ch.length) continue;
+    const k1=ch[0];
+    let t=cityOf(tz)+": gap to "+cityOf(S.home)+" "+
+      (Math.abs(g[k1])<Math.abs(g[0])?"drops":"rises")+" to "+gapWords(g[k1])+
+      " from "+dayWords(days[k1].dt);
+    if(ch.length>1){
+      const k2=ch[1];
+      t+=g[k2]===g[0]?", for "+spanWords(k2-k1)
+                     :", then "+gapWords(g[k2])+" from "+dayWords(days[k2].dt);
+    }
+    notes.push(t);
+  }
+  _driftKey=key; _driftVal=notes;
+  return notes;
+}
+
+/* ---------- least-bad slots ----------
+   When no hour has every zone inside 9-5, score each hour by how much of it
+   falls outside working time across all zones, and star the best three.
+   The night is graded, not flat: with 22:00-06:00 all equal, midnight for one
+   person tied with a 9 PM / 6 AM split, and the stars landed on 12 AM and
+   1 AM in Los Angeles for LA + Berlin + Tokyo. Graded, they land on 7 AM and
+   10-11 PM there -- the slots people actually pick for that trio. Scored in
+   quarter hours so :30 and :45 zones are judged on the minutes they get. */
+function hourCost(t){
+  if(t>=9&&t<17) return 0;
+  if((t>=7&&t<9)||(t>=17&&t<19)) return 1;
+  if(t>=19&&t<21) return 2;
+  if((t>=6&&t<7)||(t>=21&&t<22)) return 3;
+  if(t>=22||(t>=5&&t<6)) return 4;
+  return 6;                               // 00:00-05:00, asleep
+}
+function slotCost(w){
+  let c=0;
+  for(let q=0;q<4;q++) c+=hourCost(((w.h*60+w.mi+q*15)%1440)/60)/4;
+  return c+(w.wd==="Sat"||w.wd==="Sun"?4:0);
+}
 
 const FALLBACK_HOME="America/New_York";   // US east coast, if detection fails
 const DEFAULT_ROWS=["America/Los_Angeles","Europe/Berlin","Asia/Shanghai"];
@@ -1417,7 +1839,12 @@ const PRANK={}; POP.forEach((z,i)=>{ if(PRANK[z]===undefined) PRANK[z]=i; });
      date 14   days from 2024-01-01, so 2024..2068        (only if fD)
      pin   5   column index                               (only if fP)
      rows      per row: 0 + 5 bits POP rank, or 1 + 8 bits ZONES index
-   Four popular zones with a date and a pin is 54 bits -- 11 characters. */
+     tail  2+3 meeting start (:00/:15/:30/:45) and length (LEN_CODE index),
+               written only when the pin is not the default 1 h from :00
+   Four popular zones with a date and a pin is 54 bits -- 11 characters.
+   The tail is read leniently: past the end counts as 0, which is the
+   default. So links without it decode exactly as before, and a copy of the
+   page that predates it stops after the rows and still gets the pin. */
 function packState(){
   const n=S.rows.length;
   if(n<1||n>16) return null;
@@ -1440,11 +1867,16 @@ function packState(){
   if(hasD) put(days,14);
   if(pinned!==null) put(pinned,5);
   for(const z of S.rows){
-    const r=PRANK[z];
+    // either spelling packs: a row stored as Asia/Kolkata takes Calcutta's code
+    const r=PRANK[z]!==undefined?PRANK[z]:PRANK[TZALIAS[z]];
     if(r!==undefined){ put(0,1); put(r,5); continue; }
-    const i=ZIDX[z];
+    const i=ZIDX[z]!==undefined?ZIDX[z]:ZIDX[TZALIAS[z]];
     if(i===undefined) return null;          // outside the frozen table
     put(1,1); put(i,8);
+  }
+  if(pinned!==null&&(pinMin||pinLen!==60)){
+    const li=LEN_CODE.indexOf(pinLen);
+    put(pinMin/15,2); put(li<0?0:li,3);
   }
   let out="";
   for(let i=0;i<b.length;i+=5) out+=B32[parseInt((b.slice(i,i+5)+"0000").slice(0,5),2)];
@@ -1474,8 +1906,11 @@ function unpackState(str){
       raw.push(z);
     }
     const home=raw[Math.min(hi,raw.length-1)];   // resolve before dedup shifts indices
+    const opt=w=>p+w>b.length?0:get(w);          // the lenient tail
+    const mn=opt(2)*15, li=opt(3);
     return {home:home,rows:[...new Set(raw)],date:date||todayIn(home),
-            fmt:["12","24","mx"][fm]||"12",pin:pin};
+            fmt:["12","24","mx"][fm]||"12",pin:pin,
+            pinMin:pin===null?0:mn, pinLen:pin===null?60:(LEN_CODE[li]||60)};
   }catch(e){ return null; }
 }
 
@@ -1513,7 +1948,8 @@ function loadState(){
   const h=location.hash.slice(1);
   if(h&&h.indexOf("=")<0){
     const u=unpackState(h);
-    if(u){ pinned=u.pin; return {home:u.home,rows:u.rows,date:u.date,fmt:u.fmt}; }
+    if(u){ pinned=u.pin; pinMin=u.pinMin; pinLen=u.pinLen;
+           return {home:u.home,rows:u.rows,date:u.date,fmt:u.fmt}; }
   }
   if(h){
     wantLong=true;
@@ -1526,6 +1962,8 @@ function loadState(){
         // the pin lives outside S because it is a column index, not a setting;
         // range-checking needs the column count, so render() does it
         pinned=(q.p!==undefined&&/^\d{1,3}$/.test(q.p))?+q.p:null;
+        pinMin=(pinned!==null&&/^(15|30|45)$/.test(q.m||""))?+q.m:0;
+        pinLen=(pinned!==null&&LEN_OPTS.indexOf(+q.l)>=0)?+q.l:60;
         return {home,rows,date,fmt:FMTS[q.t]?q.t:"12"};
       }
     }catch(e){}
@@ -1551,7 +1989,11 @@ function saveState(){
   if(pinned!==null||S.date.y!==t0.y||S.date.mo!==t0.mo||S.date.d!==t0.d)
     P.push("d="+dPack(S.date));
   if(S.fmt&&S.fmt!=="12") P.push("t="+S.fmt);
-  if(pinned!==null) P.push("p="+pinned);
+  if(pinned!==null){
+    P.push("p="+pinned);
+    if(pinMin) P.push("m="+pinMin);
+    if(pinLen!==60) P.push("l="+pinLen);
+  }
   history.replaceState(null,"","#"+P.join("&"));
 }
 
@@ -1559,15 +2001,16 @@ function saveState(){
    RENDER
    ============================================================ */
 /* One working-hours rule for the grid's green underline and the pinned chips,
-   so the two cannot drift apart again. A column is a one-hour slot, and it
-   counts as working time only if the whole hour fits inside 9-5: it starts at
-   9:00 or later and ends by 17:00. Minutes matter -- a +5:30 zone's 16:30 slot
-   runs to 17:30, so it is fringe, not working. Fringe is a slot starting in the
-   two hours before 9, or after 16:00 up to 22:00. */
-function workBand(w){
-  const m=w.h*60+w.mi;
-  if(m>=540&&m<=960) return "biz";
-  if((m>=420&&m<540)||(m>960&&m<1320)) return "edge";
+   so the two cannot drift apart again. A slot is working time only if all of
+   it fits inside 9-5: it starts at 9:00 or later and ends by 17:00. Minutes
+   matter -- a +5:30 zone's 16:30 hour runs to 17:30, so it is fringe. Fringe
+   means it starts no earlier than 7:00 and ends before 23:00. A grid column
+   is a one-hour slot; a pinned meeting passes its own length, so a 2 h
+   meeting at 16:00 is fringe even though the 16:00 column is green. */
+function workBand(w,len){
+  const m=w.h*60+w.mi, e=m+(len||60);
+  if(m>=540&&e<=1020) return "biz";
+  if(m>=420&&e<1380) return "edge";
   return "off";
 }
 
@@ -1605,6 +2048,15 @@ function render(){
   const instants=[]; for(let i=0;i<N;i++) instants.push(anchor+i*3600000);
   // a hand-edited p=, or a tzdata version that disagrees about the day length
   if(pinned!==null&&!(pinned>=0&&pinned<N)){ pinned=null; saveState(); }
+  // clearing a pin anywhere also clears its meeting shape, so the next pin
+  // starts from the default rather than inheriting a stale length
+  if(pinned===null){ pinMin=0; pinLen=60; }
+  // every column the meeting overlaps carries the pinned fill
+  const pinCols=new Set();
+  if(pinned!==null){
+    const a=pinned*60+pinMin, e=a+pinLen;
+    for(let i=Math.floor(a/60);i*60<e&&i<N;i++) pinCols.add(i);
+  }
 
   // --- header ---
   const today=todayIn(S.home);
@@ -1688,6 +2140,16 @@ function render(){
   // a shared 9-5 window means nothing if it lands on someone's Saturday
   const allBiz=instants.map((_,i)=>cellData.every(r=>
     workBand(r[i])==="biz"&&r[i].wd!=="Sat"&&r[i].wd!=="Sun"));
+  /* Only when there is no full overlap -- the green underline covers that
+     case -- and only on a home weekday: at a weekend no hour is anyone's
+     working time, so the stars would appear on every Saturday and mean
+     nothing. Two zones at least, since one zone always has its own 9-5. */
+  let best=[];
+  const homeDow=new Date(Date.UTC(D.y,D.mo-1,D.d)).getUTCDay();
+  if(S.rows.length>=2&&homeDow!==0&&homeDow!==6&&!allBiz.some(Boolean)){
+    best=instants.map((_,i)=>({i:i,c:cellData.reduce((a,r)=>a+slotCost(r[i]),0)}))
+      .sort((a,b)=>a.c-b.c||a.i-b.i).slice(0,3).map(x=>x.i).sort((a,b)=>a-b);
+  }
   // one instant for every row, so clocks cannot disagree with each other
   const NOW=Date.now();
   /* The offset badge and abbreviation describe the GRID, so they must be read
@@ -1702,6 +2164,7 @@ function render(){
   const nowExact=(NOW-anchor)/3600000;
   const nowCol=(nowExact>=0&&nowExact<N)?Math.floor(nowExact):-1;
   const nowPct=((nowExact-Math.floor(nowExact))*100).toFixed(1);
+  lastN=N; lastNowCol=nowCol;
 
   const GT='grid-template-columns:repeat('+N+',minmax(var(--cellmin,34px),1fr))';
 
@@ -1709,13 +2172,15 @@ function render(){
   html+='<div class="gwrap"><div class="row hdr"><div class="lab">Place / Timezone'+
       '<i class="lgrip" title="Drag to resize &middot; double-click to reset"></i></div>'+
     '<div class="cells" style="'+GT+'">';
-  const home24=uses24(S.home);
+  const home24=uses24(S.home), rulerLab=[];
   instants.forEach((t,i)=>{
     const w=wall(t,S.home);
     const lab=home24?pad(w.h):((w.h%12===0?12:w.h%12)+(w.h<12?"a":"p"));
+    rulerLab[i]=lab;
     const edge=nowCol>=N-1?" pr":(nowCol<=0?" pl":"");
-    html+='<div class="hc'+(i===nowCol?" iscur":"")+(i===pinned?" pin":"")+
-      '" data-col="'+i+'"'+(i===nowCol?' data-nowpct="'+nowPct+'"':"")+'>'+lab+
+    html+='<div class="hc'+(i===nowCol?" iscur":"")+(pinCols.has(i)?" pin":"")+
+      '" data-col="'+i+'"'+(i===nowCol?' data-nowpct="'+nowPct+'"':"")+'>'+
+      (best.indexOf(i)>=0?'<b class="bstar" title="One of the least-bad hours">&#9733;</b>':"")+lab+
       (i===nowCol?'<span class="nowpill'+edge+'" style="'+
         (edge?"":"left:"+nowPct+"%")+'">NOW</span>':"")+'</div>';
   });
@@ -1747,7 +2212,7 @@ function render(){
             '<div class="zdate">'+now.wd+", "+titleMon(now.mo)+" "+now.d+'</div></div>'+
         '</div>'+
         '<div class="acts">'+
-          '<button data-up="'+ri+'" title="Move up">&#9650;</button>'+
+          '<button data-up="'+ri+'" title="Move up &middot; drag to reorder">&#9650;</button>'+
           '<button data-rm="'+ri+'" title="Remove">&times;</button>'+
         '</div>'+
         '<i class="lgrip" title="Drag to resize &middot; double-click to reset"></i>'+
@@ -1762,7 +2227,7 @@ function render(){
       const cls=["c"];
       if(w.wd==="Sat"||w.wd==="Sun") cls.push("we");
       if(allBiz[i]) cls.push("allbiz");
-      if(i===pinned) cls.push("pin");
+      if(pinCols.has(i)) cls.push("pin");
       let inner=cellInner(w,r24);
       // the rollover marks the boundary rather than replacing the hour
       if(dayChanged) inner+='<i class="dayline"></i><span class="daypill'+
@@ -1779,36 +2244,60 @@ function render(){
 
   // --- pinned comparison, else the info line ---
   if(pinned!==null&&instants[pinned]!==undefined){
-    const t=instants[pinned];
-    const hw=wall(t,S.home);
+    const t0=instants[pinned]+pinMin*60000, t1=t0+pinLen*60000;
+    const hw=wall(t0,S.home);
+    pinSpan={t0:t0,t1:t1};
+    const drift=driftNotes(t0);
+    const seg=(k,vals,cur,lab,tip)=>'<span class="pseg" data-k="'+k+'" title="'+tip+'">'+
+      vals.map(v=>'<button'+(v===cur?' class="on"':"")+' data-v="'+v+'">'+lab(v)+
+        '</button>').join("")+'</span>';
     html+='<div class="pinbar"><span class="plabel">Pinned &middot; '+
       hw.wd+" "+hw.d+" "+titleMon(hw.mo)+'</span>'+
-      S.rows.map(tz=>{
-        const w=wall(t,tz);
-        const ts=hhmm(w,uses24(tz));
-        const band="w-"+workBand(w);          // the grid's rule, not a copy of it
-        const we=w.wd==="Sat"||w.wd==="Sun";
-        // the date is stated once on the bar; only call out rows that differ
-        const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
-        return '<span class="pinchip '+(we?"w-off":band)+'" style="background:'+
-          hourColor(w.h,w.mi)+'"><b>'+cityOf(tz)+'</b> '+ts+
-          (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
-          (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
-      }).join("")+
+      /* each label travels with its buttons, so a narrow bar wraps between
+         the two groups rather than stranding "length" at the end of a line */
+      '<span class="pinctl"><span class="pgrp"><em>start</em>'+
+        seg("m",[0,15,30,45],pinMin,v=>":"+pad(v),"Minutes past the pinned hour")+'</span>'+
+        '<span class="pgrp"><em>length</em>'+
+        seg("l",LEN_OPTS,pinLen,lenLabel,"Meeting length")+'</span></span>'+
       '<span class="spacer"></span>'+
       '<span class="pinlegend"><em><i style="background:var(--biz)"></i>9&ndash;5</em>'+
       '<em><i style="background:#e0a340"></i>fringe</em>'+
       '<em><i style="background:#93a4b8"></i>off hours</em></span>'+
       '<span class="lk" id="unpin">Clear pin</span>'+
-      '<div class="pinsent"><span id="psText">'+pinSentence(t)+'</span>'+
-        '<button class="ui" id="psCopy">Copy sentence</button></div></div>';
+      '<div class="pinchips">'+S.rows.map(tz=>{
+        const w=wall(t0,tz), e=wall(t1,tz), r24=uses24(tz);
+        // the whole meeting is tested, not just its first hour
+        const band="w-"+workBand(w,pinLen);
+        const we=w.wd==="Sat"||w.wd==="Sun";
+        // the date is stated once on the bar; only call out rows that differ
+        const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
+        return '<span class="pinchip '+(we?"w-off":band)+'" style="background:'+
+          hourColor(w.h,w.mi)+'"><b>'+cityOf(tz)+'</b> '+hhmm(w,r24)+"&ndash;"+hhmm(e,r24)+
+          (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
+          (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
+      }).join("")+'</div>'+
+      (drift.length?'<div class="drift" title="The pinned time repeated weekly, over the next 8 weeks">'+
+        drift.slice(0,3).map(x=>'<div>&#9888; '+esc(x)+'</div>').join("")+
+        (drift.length>3?'<div>&hellip; and '+(drift.length-3)+' more</div>':"")+'</div>':"")+
+      '<div class="pinsent"><span id="psText">'+pinSentence(t0,t1)+'</span>'+
+        '<div class="pinbtns"><button class="ui" id="psCopy">Copy sentence</button>'+
+        '<button class="ui" id="psIcs" title="Download a calendar file for this meeting">Add to calendar</button>'+
+        (canShare()?'<button class="ui" id="psShare">Share</button>':"")+'</div>'+
+      '</div></div>';
   }else{
     const dayNote=len===24?"":(" &middot; <b>"+len+"-hour day</b> here (DST transition)");
-    html+='<footer><span>'+N+' hours from '+
+    pinSpan=null;
+    html+='<footer>'+(best.length?'<span class="bestline">No hour has everyone in 9&ndash;5 &middot; least bad: '+
+      best.map(i=>'<a class="lk" data-best="'+i+'">&#9733;'+rulerLab[i]+'</a>').join(" ")+'</span>':"")+
+      '<span>'+N+' hours from '+
       new Date(anchor).toISOString().replace(".000Z","Z")+dayNote+'</span>'+
       '<span>Green underline = every zone in working hours (Mon&ndash;Fri 9&ndash;5)</span>'+
       '<span>Hatched = weekend</span>'+
-      '<span>Click any column to pin a comparison</span></footer>';
+      '<span>'+(touchMode?"Tap any column to pin a meeting"
+        :"Click a column to pin a meeting, or drag across several")+'</span>'+
+      (touchMode?"":'<span class="kbd" title="Keyboard shortcuts">'+
+        '&larr; &rarr; pin &middot; [ ] day &middot; T today &middot; / search &middot; '+
+        'C copy &middot; Esc clear</span>')+'</footer>';
   }
 
   app.innerHTML=html;
@@ -1825,6 +2314,139 @@ function render(){
    hover there. A mouse never fires touchstart; a finger always does, and on
    a hybrid the most recent input wins. */
 let hovCol=null, touchMode=false, gridScrollLeft=0, scrollKey="", dragged=false;
+/* Desktop shortcut for a meeting length: press on a column and drag across.
+   Mouse only -- on a touchscreen that gesture is a scroll. A plain click is
+   left to the cell's own click handler, so pinning works exactly as before.
+   Listened for on the document so a release outside the grid still ends it. */
+let selDrag=null;
+function colAt(x,y){
+  const el=document.elementFromPoint(x,y), c=el&&el.closest&&el.closest(".c,.hc");
+  return c&&c.dataset.col!==undefined?+c.dataset.col:null;
+}
+document.addEventListener("pointermove",function(e){
+  if(!selDrag) return;
+  const c=colAt(e.clientX,e.clientY); if(c===null) return;
+  // capped at 4 h, measured from where the drag began, in either direction
+  const a=c<selDrag.s?Math.max(c,selDrag.s-3):selDrag.s;
+  const b=c<selDrag.s?selDrag.s:Math.min(c,selDrag.s+3);
+  if(a!==selDrag.a||b!==selDrag.b){ selDrag.a=a; selDrag.b=b; placeOverlays(); }
+});
+/* ---------- keyboard ----------
+   Left/Right move the pin (or pin the current hour), [ ] step a day, T today,
+   / search, C copy the sentence, Esc clear the pin. Never while typing, and
+   never with a modifier, so Ctrl+C, Cmd+[ and the rest keep their meaning. */
+let lastN=0, lastNowCol=-1;                // written by render()
+function revealCol(i){
+  /* keep a column in view as the pin walks: the sticky label covers the
+     left of the scroller, so "visible" starts at its right edge */
+  const gw=document.querySelector(".gwrap"), h=gw&&gw.querySelector('.hc[data-col="'+i+'"]'),
+        lab=gw&&gw.querySelector(".row.hdr .lab");
+  if(!h||!lab) return;
+  const g=gw.getBoundingClientRect(), r=h.getBoundingClientRect(),
+        left=g.left+lab.getBoundingClientRect().width;
+  if(r.left<left) gw.scrollLeft-=left-r.left+8;
+  else if(r.right>g.right) gw.scrollLeft+=r.right-g.right+8;
+  gridScrollLeft=gw.scrollLeft; placeOverlays();
+}
+document.addEventListener("keydown",function(e){
+  const app=document.getElementById("app");          // absent in self-test mode
+  if(e.ctrlKey||e.metaKey||e.altKey||!S||!app||!app.firstChild) return;
+  const t=e.target, tag=t&&t.tagName;
+  if(tag==="INPUT"||tag==="TEXTAREA"||tag==="SELECT"||(t&&t.isContentEditable)) return;
+  const k=e.key;
+  if((k==="ArrowLeft"||k==="ArrowRight")&&lastN>0){
+    e.preventDefault();
+    if(pinned===null) pinned=lastNowCol>=0?lastNowCol:Math.min(9,lastN-1);
+    else pinned=Math.max(0,Math.min(lastN-1,pinned+(k==="ArrowLeft"?-1:1)));
+    saveState(); render(); revealCol(pinned);
+  }else if(k==="["||k==="]"){
+    S.date=addDays(S.date,k==="["?-1:1); pinned=null; saveState(); render();
+  }else if(k==="t"||k==="T"){
+    S.date=todayIn(S.home); pinned=null; saveState(); render();
+  }else if(k==="/"){
+    const q=document.getElementById("q"); if(q){ e.preventDefault(); q.focus(); }
+  }else if((k==="c"||k==="C")&&pinned!==null){
+    const b=document.getElementById("psCopy"); if(b) b.click();
+  }else if(k==="Escape"&&pinned!==null){
+    pinned=null; saveState(); render();
+  }
+});
+
+/* ---------- undo ----------
+   Removing a row is one tap -- on a phone an easy mis-tap -- so it can be
+   taken back for a few seconds. The toast lives outside #app so a re-render
+   (the clock refreshes every 30 s) cannot wipe it mid-countdown. */
+let undoSnap=null, undoTimer=0;
+function hideUndo(){
+  const t=document.getElementById("toast"); if(t) t.classList.remove("show");
+  undoSnap=null;
+}
+function showUndo(label,snap){
+  undoSnap=snap;
+  let t=document.getElementById("toast");
+  if(!t){ t=document.createElement("div"); t.id="toast"; t.className="toast";
+          t.setAttribute("role","status"); document.body.appendChild(t); }
+  t.innerHTML='<span>Removed '+esc(label)+'</span><button class="tbtn" id="undoBtn">Undo</button>';
+  t.classList.add("show");
+  document.getElementById("undoBtn").onclick=function(){
+    const u=undoSnap; if(!u) return;
+    S.rows=u.rows; S.home=u.home; S.date=u.date;
+    pinned=u.pinned; pinMin=u.pinMin; pinLen=u.pinLen;
+    hideUndo(); saveState(); render();
+  };
+  clearTimeout(undoTimer); undoTimer=setTimeout(hideUndo,6000);
+}
+
+/* ---------- reorder by dragging ----------
+   Desktop: drag the up-arrow, which still moves a row up one on a click.
+   Touch: press and hold a row's label for 350 ms, then drag; a quick swipe
+   stays a scroll. The moved row follows the pointer and a line marks where it
+   will land. After a touch drag the finger lifts over whatever row is now
+   there, and the browser would turn that into a tap -- setting a home zone or
+   pinning a column nobody chose -- so the next click is swallowed. */
+let reo=null, suppressTap=false;
+function reoStart(ri,y){
+  const rows=[...document.querySelectorAll(".row:not(.hdr)")];
+  if(rows.length<2||!rows[ri]) return false;
+  const line=document.createElement("div"); line.className="reoline";
+  document.body.appendChild(line);
+  rows[ri].classList.add("reo");
+  reo={from:ri,to:ri,y0:y,rows:rows,rects:rows.map(r=>r.getBoundingClientRect()),line:line};
+  reoMove(y);
+  return true;
+}
+function reoMove(y){
+  if(!reo) return;
+  reo.rows[reo.from].style.transform="translateY("+(y-reo.y0)+"px)";
+  let to=reo.rects.length;                 // the first row whose middle is below the pointer
+  for(let i=0;i<reo.rects.length;i++){
+    const r=reo.rects[i]; if(y<r.top+r.height/2){ to=i; break; }
+  }
+  reo.to=to;
+  const g=document.querySelector(".gwrap").getBoundingClientRect(),
+        edge=to<reo.rects.length?reo.rects[to].top:reo.rects[reo.rects.length-1].bottom;
+  reo.line.style.cssText="top:"+(edge-1)+"px;left:"+g.left+"px;width:"+g.width+"px";
+}
+function reoEnd(commit){
+  if(!reo) return;
+  const r=reo; reo=null;
+  r.line.remove(); r.rows[r.from].classList.remove("reo"); r.rows[r.from].style.transform="";
+  if(!commit) return;
+  let to=r.to; if(to>r.from) to--;         // lifting the row out shifts every slot below it
+  if(to===r.from) return;
+  S.rows.splice(to,0,S.rows.splice(r.from,1)[0]);
+  saveState(); render();
+}
+document.addEventListener("click",function(e){
+  if(suppressTap){ suppressTap=false; e.stopPropagation(); e.preventDefault(); }
+},true);
+
+document.addEventListener("pointerup",function(){
+  if(!selDrag) return;
+  const d=selDrag; selDrag=null;
+  if(d.b>d.a){ pinned=d.a; pinMin=0; pinLen=(d.b-d.a+1)*60; saveState(); render(); }
+  else placeOverlays();
+});
 
 /* Every render rebuilds .gwrap, which resets its scrollLeft to 0 -- so the
    30-second clock refresh used to throw away the user's scroll position.
@@ -1947,7 +2569,7 @@ document.addEventListener("touchstart",function(){ touchMode=true; },{passive:tr
 function placeOverlays(){
   const gw=document.querySelector(".gwrap");
   if(!gw) return;
-  gw.querySelectorAll(".pinbox,.nowbar,.hoverbox").forEach(e=>e.remove());
+  gw.querySelectorAll(".pinbox,.nowbar,.hoverbox,.selbox").forEach(e=>e.remove());
   const rows=gw.querySelectorAll(".row:not(.hdr)");
   if(!rows.length) return;
   const g=gw.getBoundingClientRect();
@@ -1967,8 +2589,26 @@ function placeOverlays(){
     d.style.width=a.width+"px"; d.style.height=(b.bottom-a.top)+"px";
     gw.appendChild(d);
   };
-  if(pinned!==null) colBox("pinbox",pinned);
-  if(hovCol!==null&&hovCol!==pinned) colBox("hoverbox",hovCol);
+  /* A meeting box starts part-way into its column and may span several.
+     Columns are exact UTC hours, even on DST days, so minutes map to width
+     linearly. Clamped at the grid's right edge: never overhang (see above). */
+  const spanBox=(cls,col,startMin,lenMin)=>{
+    const head=gw.querySelector('.hc[data-col="'+col+'"]');
+    const cells=gw.querySelectorAll('.c[data-col="'+col+'"]');
+    const end=gw.querySelector(".hc:last-child");
+    if(!head||!cells.length||!end) return;
+    const a=head.getBoundingClientRect(), b=cells[cells.length-1].getBoundingClientRect(),
+          z=end.getBoundingClientRect();
+    const x0=X(a)+a.width*startMin/60, x1=Math.min(x0+a.width*lenMin/60, X(z)+z.width);
+    const d=document.createElement("div");
+    d.className=cls;
+    d.style.left=x0+"px"; d.style.top=Y(a)+"px";
+    d.style.width=Math.max(4,x1-x0)+"px"; d.style.height=(b.bottom-a.top)+"px";
+    gw.appendChild(d);
+  };
+  if(pinned!==null) spanBox("pinbox",pinned,pinMin,pinLen);
+  if(selDrag&&selDrag.b>selDrag.a) spanBox("selbox",selDrag.a,0,(selDrag.b-selDrag.a+1)*60);
+  else if(hovCol!==null&&hovCol!==pinned) colBox("hoverbox",hovCol);
 
   /* day-pill detail follows the measured cell width, so it also shrinks when
      a DST day adds a 25th column rather than only when the window narrows */
@@ -2014,6 +2654,11 @@ function wire(){
     S.fmt=b.dataset.fmt; saveState(); render();
   });
   $("#copy").onclick=()=>{
+    // phones: the native share sheet; a cancelled sheet is not an error
+    if(canShare()){
+      navigator.share({title:document.title,url:location.href}).catch(()=>{});
+      return;
+    }
     const btn=$("#copy"), keep=btn.innerHTML;   // holds the full/min label spans
     const done=t=>{ btn.textContent=t; setTimeout(()=>{btn.innerHTML=keep;},1400); };
     if(navigator.clipboard&&window.isSecureContext){
@@ -2032,6 +2677,23 @@ function wire(){
   const dpv=$("#dprev"); if(dpv) dpv.onclick=step(-1);
   const dnx=$("#dnext"); if(dnx) dnx.onclick=step(1);
   const up=$("#unpin"); if(up) up.onclick=()=>{ pinned=null; saveState(); render(); };
+  const ics=$("#psIcs"); if(ics) ics.onclick=()=>{
+    if(!pinSpan) return;
+    const w=wall(pinSpan.t0,S.home);
+    downloadIcs(icsText(pinSpan.t0,pinSpan.t1,"Meeting",$("#psText").textContent,location.href),
+      "meeting-"+w.y+"-"+pad(w.mo)+"-"+pad(w.d)+"-"+pad(w.h)+pad(w.mi)+".ics");
+  };
+  const shr=$("#psShare"); if(shr) shr.onclick=()=>{
+    navigator.share({title:"Meeting time",text:$("#psText").textContent,
+                     url:location.href}).catch(()=>{});
+  };
+  $$("[data-best]").forEach(a=>a.onclick=()=>{
+    pinned=+a.dataset.best; saveState(); render();
+  });
+  $$(".pseg button").forEach(b=>b.onclick=()=>{
+    if(b.parentNode.dataset.k==="m") pinMin=+b.dataset.v; else pinLen=+b.dataset.v;
+    saveState(); render();
+  });
   const pc=$("#psCopy"); if(pc) pc.onclick=()=>{
     const txt=$("#psText").textContent, keep=pc.textContent;
     const done=t=>{ pc.textContent=t; setTimeout(()=>{pc.textContent=keep;},1400); };
@@ -2047,14 +2709,66 @@ function wire(){
 
   $$("[data-rm]").forEach(b=>b.onclick=()=>{
     const i=+b.dataset.rm, gone=S.rows[i];
+    const snap={rows:S.rows.slice(),home:S.home,date:Object.assign({},S.date),
+                pinned:pinned,pinMin:pinMin,pinLen:pinLen};
     S.rows.splice(i,1);
     if(gone===S.home&&S.rows.length){ S.home=S.rows[0]; S.date=todayIn(S.home); }
     saveState(); render();
+    showUndo(cityOf(gone),snap);
   });
-  $$("[data-up]").forEach(b=>b.onclick=()=>{
-    const i=+b.dataset.up; if(i===0) return;
-    const t=S.rows[i-1]; S.rows[i-1]=S.rows[i]; S.rows[i]=t;
-    saveState(); render();
+  $$("[data-up]").forEach(b=>{
+    b.onpointerdown=e=>{
+      if(e.pointerType!=="mouse"||e.button!==0) return;
+      e.preventDefault();                  // no text selection trailing the drag
+      const ri=+b.dataset.up, y0=e.clientY;
+      let on=false;
+      const mv=ev=>{
+        if(!on&&Math.abs(ev.clientY-y0)>4) on=reoStart(ri,y0);
+        if(on) reoMove(ev.clientY);
+      };
+      const upH=()=>{
+        document.removeEventListener("pointermove",mv);
+        document.removeEventListener("pointerup",upH);
+        if(on){ b.dataset.dragged="1"; setTimeout(()=>{ delete b.dataset.dragged; },0); reoEnd(true); }
+      };
+      document.addEventListener("pointermove",mv);
+      document.addEventListener("pointerup",upH);
+    };
+    b.onclick=()=>{
+      if(b.dataset.dragged) return;        // that was a drag, not a click
+      const i=+b.dataset.up; if(i===0) return;
+      const t=S.rows[i-1]; S.rows[i-1]=S.rows[i]; S.rows[i]=t;
+      saveState(); render();
+    };
+  });
+  // touch: long-press a row label, then drag
+  $$(".row:not(.hdr) .lab").forEach((lab,ri)=>{
+    let timer=0, x0=0, y0=0, armed=false;
+    lab.addEventListener("touchstart",e=>{
+      if(e.touches.length!==1||e.target.closest("button,.lgrip")) return;
+      x0=e.touches[0].clientX; y0=e.touches[0].clientY; armed=false;
+      clearTimeout(timer);
+      timer=setTimeout(()=>{
+        armed=reoStart(ri,y0);
+        if(armed&&navigator.vibrate) navigator.vibrate(12);
+      },350);
+    },{passive:true});
+    lab.addEventListener("touchmove",e=>{
+      const t=e.touches[0];
+      if(!armed){                            // moved before the hold: it is a scroll
+        if(Math.abs(t.clientX-x0)>8||Math.abs(t.clientY-y0)>8) clearTimeout(timer);
+        return;
+      }
+      e.preventDefault(); reoMove(t.clientY);
+    },{passive:false});
+    const end=e=>{
+      clearTimeout(timer);
+      if(!armed) return;
+      armed=false; suppressTap=true; setTimeout(()=>{ suppressTap=false; },600);
+      reoEnd(e.type==="touchend");
+    };
+    lab.addEventListener("touchend",end);
+    lab.addEventListener("touchcancel",end);
   });
   $$("[data-home]").forEach(el=>el.onclick=()=>{
     S.home=el.dataset.home; S.date=todayIn(S.home); pinned=null; saveState(); render();
@@ -2074,6 +2788,10 @@ function wire(){
     };
     // clear hover on click too: a hybrid laptop reports hover:hover but a
     // tap on its touchscreen still never sends mouseleave
+    c.onpointerdown=e=>{
+      if(e.pointerType!=="mouse"||e.button!==0) return;
+      const i=+c.dataset.col; selDrag={s:i,a:i,b:i};
+    };
     c.onclick=()=>{
       if(dragged){ dragged=false; return; }   // that was a scroll, not a tap
       const i=+c.dataset.col; pinned=(pinned===i?null:i);
@@ -2088,8 +2806,9 @@ function wire(){
   const show=()=>{
     list=searchZones(q.value);
     if(!list.length){ close(); return; }
+    const offQ=parseOffsetQuery(fold(q.value.trim()));
     drop.innerHTML=list.map((z,i)=>'<div data-i="'+i+'"><span class="off">'+
-      utcPart(z[0])+'</span>'+shortName(z[0])+
+      offTagFor(z,offQ)+'</span>'+shortName(z[0])+
       (z[4]&&!/^GMT[+-]/.test(z[4])?'<span class="abbr">'+z[4]+'</span>':"")+
       '</div>').join("");
     drop.classList.add("open");

@@ -1,7 +1,8 @@
 # World Time Tool
 
 A single-file time-zone comparison grid. Pick a set of zones, read across an
-hour axis, pin a moment and copy it out as a sentence.
+hour axis, pin a meeting and take it away as a sentence, a link or a calendar
+event.
 
 **[Live demo](https://photonzq.github.io/world-time-tool/)**
 
@@ -26,21 +27,48 @@ both of which are restricted on `file://`.
 ## What it does
 
 - **~426 zones** — the Windows time-zone selector list, merged with every
-  other zone the browser's ICU knows about. Searchable by city, country
-  (`brazil`, `united kingdom`, `usa`), IANA id, abbreviation (`CEST`, `JST`,
-  `MSK`), UTC offset (`utc+8`, `+5:30`, `gmt-3`) and a few aliases (`Kolkata`,
-  `Boston`). Results are ranked, whole-word matches first, so `india` finds
-  India before Indiana; among equal matches the more commonly compared zone
-  comes first, and Enter adds the top result.
+  other zone the browser's ICU knows about. Searchable by:
+  - city, including major cities that are not zones of their own
+    (`houston`, `munich`, `bombay`, `nyc`, `sf`)
+  - state or region (`california`, `texas`, `queensland`, `ontario`)
+  - country (`brazil`, `united kingdom`, `usa`), taken from the browser's CLDR
+    data rather than shipped
+  - ICU's own zone names (`gulf`, `arabian`, `central european`)
+  - IANA id, abbreviation (`CEST`, `JST`, `MSK`), or UTC offset (`utc+8`,
+    `+5:30`, `gmt-3`)
+
+  Results are ranked, whole-word matches first, so `india` finds India before
+  Indiana. Among equal matches the more commonly compared zone comes first, and
+  Enter adds the top result. An offset search shows the offset it matched on.
 - **Three clock formats** — `am/pm`, `24`, and `MX`, which writes each row the
   way its own country writes clock time (Zurich `05:42`, New York `11:47p`).
 - **Correct DST**, including the awkward cases: 23/24/25-hour days, Lord Howe's
   half-hour shift, zones whose local midnight does not exist, and dates a zone
   skipped entirely when it crossed the date line.
-- **Pin a column** to get every zone's local time for that instant, colour-coded
-  by working hours, plus a copy-ready sentence for an email or a prompt.
-  Working hours are 9–5 in each zone's own time: a one-hour slot counts only if
-  it ends by 17:00, so 5 PM is fringe, and so is a half-hour zone's 4:30 PM.
+- **Pin a meeting.** Click a column, or on desktop drag across several. The
+  pinned bar sets the start (`:00` `:15` `:30` `:45`) and the length (30 minutes
+  to 4 hours). Each zone gets a chip with its local range, coloured by working
+  hours over the *whole* meeting: 9–5 in that zone's own time, so a meeting
+  counts only if it ends by 17:00. A 2-hour meeting at 4 PM is fringe even
+  though the 4 PM column is green. From the bar:
+  - **Copy sentence** — prose for an email or a prompt, ending in an ISO 8601
+    interval
+  - **Add to calendar** — an `.ics` file generated in the page, times in UTC so
+    any calendar converts them
+  - **Share** — on phones, the system share sheet
+- **Least-bad hours.** On a weekday with no hour where everyone is inside 9–5,
+  the three least-bad hours are starred on the ruler and listed in the footer;
+  click one to pin it. Night is weighted by how late it is, so a 7 AM start
+  beats asking someone to join at midnight.
+- **DST drift warnings.** A recurring meeting stays fixed in the home clock,
+  and when another zone changes its clocks on a different date, the gap moves.
+  If that happens within 8 weeks of the pinned date, the bar says when and for
+  how long ("Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one
+  week").
+- **Keyboard:** `←` `→` move the pin, `[` `]` change day, `T` today, `/` search,
+  `C` copy the sentence, `Esc` clear the pin.
+- **Reorder and undo.** Drag the ▲ on desktop, or press and hold a row on a
+  phone, to move it. Removing a row can be undone for six seconds.
 - **Drag the divider** on the right of the place column to widen it when a
   zone's full name does not fit; double-click the divider to reset. The width
   is remembered. Hovering a place or its subtitle shows the full text and the
@@ -69,9 +97,14 @@ significant bit first:
 | date | 14 | days from 2024-01-01, so 2024–2068 |
 | pinned column | 5 | |
 | each row | 6 or 9 | `0` + 5-bit rank for the 32 most-compared zones, else `1` + 8-bit `ZONES` index |
+| meeting | 2 + 3 | start minute and length, only when the meeting is not the default 1 h from `:00` |
 
-Four common zones with a date and a pin is 54 bits — **11 characters**. Without
-a date or pin it is 7.
+Four common zones with a date and a pin is 54 bits — **11 characters**, one more
+with a non-default meeting. Without a date or pin it is 7.
+
+The meeting tail is read leniently: reading past the end yields 0, which is
+the default. So a link without it decodes exactly as it always did, and an
+older copy of the page, which stops after the rows, still gets the right pin.
 
 Zone codes point into two literals frozen in `index.html`: `ZONES`, the Windows
 time-zone list, and `POP`, the 32 zones that get the short code. **Both are
@@ -89,8 +122,9 @@ Anything that does not fit falls back to the readable form: a zone outside
     .../#z=am.New_York,am.Los_Angeles,eu.Berlin,as.Shanghai&d=20260921&p=14
 
 `z` is the rows, `h` the home zone when it is not the first row, `d` the date,
-`t` the clock format, `p` the pinned column. IANA area prefixes fold to two
-letters (`am.` = `America/`), and the fragment carries `/` and `,` unescaped.
+`t` the clock format, `p` the pinned column, `m` the meeting's start minute and
+`l` its length in minutes. IANA area prefixes fold to two letters (`am.` =
+`America/`), and the fragment carries `/` and `,` unescaped.
 
 Arriving on a readable link keeps writing readable ones, so hand-editing does
 not turn opaque the moment it is applied. Links written before this encoding
@@ -100,7 +134,8 @@ existed, with percent-encoded full zone names, still load.
 
 Omitted keys take their default, so a link with no date always opens on today —
 useful for a bookmark. Pinning forces the date to be written, because a pin
-names one instant and would otherwise land on the wrong day.
+names one instant and would otherwise land on the wrong day. A 1-hour meeting
+from `:00` is the default and adds nothing.
 
 ### QR codes
 
@@ -149,17 +184,24 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 174 assertions covering DST
-transitions, offset arithmetic, ISO weeks, the zone catalogue, the link codec
-and the clock-format logic, and prints a pass/fail table. Golden values were
-cross-checked against an independent implementation.
+`index.html?selftest=1` locally. It runs 219 assertions, covering:
+- DST transitions, offset arithmetic, ISO weeks
+- the zone catalogue, search ranking and name mapping
+- the link codec, including every meeting start and length
+- the calendar file format, DST drift notes and slot scoring
+- the clock-format logic
+
+It prints a pass/fail table. Golden values were cross-checked against an
+independent implementation.
 
 ## Browser support
 
 Roughly 2021 and newer (Chrome 84+, Safari 14.1+), set by flexbox `gap`.
-Two newer APIs degrade rather than break: without `Intl.supportedValuesOf` the
-catalogue falls back to the Windows list, and without `Intl.Locale.getTimeZones`
-the `MX` format behaves as 24-hour.
+Newer APIs degrade rather than break:
+- without `Intl.supportedValuesOf`, the catalogue falls back to the Windows list
+- without `Intl.Locale.getTimeZones`, the `MX` format behaves as 24-hour and
+  country names are not searchable
+- without `navigator.share`, the Link button copies instead
 
 ## Licence
 
