@@ -57,7 +57,10 @@ both of which are restricted on `file://`.
   by a start date and an end date than by +1h.) Each zone gets a chip with its
   local range, coloured by working hours over the *whole* meeting: 9–5 in that
   zone's own time, so a meeting counts only if it ends by 17:00. A 2-hour
-  meeting at 4 PM is fringe even though the 4 PM column is green. From the bar:
+  meeting at 4 PM is fringe even though the 4 PM column is green. **‹ 1h** and
+  **1h ›** move the whole meeting an hour either way, keeping its shape — on a
+  phone, easier than hitting a narrow column. A shared link opens with the
+  pinned meeting in view. From the bar:
   - **Copy sentence** — prose for an email or a prompt, ending in an ISO 8601
     interval
   - **Add to calendar** — an `.ics` file generated in the page, times in UTC so
@@ -85,7 +88,12 @@ both of which are restricted on `file://`.
 - **Keyboard:** `←` `→` move the pin, `[` `]` change day, `T` today, `/` search,
   `C` copy the sentence, `Esc` clear the pin.
 - **Reorder and undo.** Drag the ▲ on desktop, or press and hold a row on a
-  phone, to move it. Removing a row can be undone for six seconds.
+  phone, to move it. Removing a row, **Reset** and changing the home zone can
+  each be undone for six seconds.
+- **Changing the home zone keeps your place.** Use the ★, or tap a name on a
+  phone: a pinned meeting stays at the same moment, now seen from the new
+  home, and the date you were looking at stays put. **Today** always brings
+  the current hour back into view.
 - **Drag the divider** on the right of the place column to widen it when a
   zone's full name does not fit; double-click the divider to reset. The width
   is remembered. Hovering a place or its subtitle shows the full text and the
@@ -201,7 +209,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 250 assertions, covering:
+`index.html?selftest=1` locally. It runs 258 assertions, covering:
 - DST transitions, offset arithmetic, ISO weeks
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length
