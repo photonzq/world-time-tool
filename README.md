@@ -26,8 +26,12 @@ both of which are restricted on `file://`.
 ## What it does
 
 - **~426 zones** — the Windows time-zone selector list, merged with every
-  other zone the browser's ICU knows about. Searchable by city, IANA id,
-  abbreviation (`CEST`, `JST`, `MSK`) and a few aliases (`Kolkata`, `Boston`).
+  other zone the browser's ICU knows about. Searchable by city, country
+  (`brazil`, `united kingdom`, `usa`), IANA id, abbreviation (`CEST`, `JST`,
+  `MSK`), UTC offset (`utc+8`, `+5:30`, `gmt-3`) and a few aliases (`Kolkata`,
+  `Boston`). Results are ranked, whole-word matches first, so `india` finds
+  India before Indiana; among equal matches the more commonly compared zone
+  comes first, and Enter adds the top result.
 - **Three clock formats** — `am/pm`, `24`, and `MX`, which writes each row the
   way its own country writes clock time (Zurich `05:42`, New York `11:47p`).
 - **Correct DST**, including the awkward cases: 23/24/25-hour days, Lord Howe's
@@ -35,6 +39,8 @@ both of which are restricted on `file://`.
   skipped entirely when it crossed the date line.
 - **Pin a column** to get every zone's local time for that instant, colour-coded
   by working hours, plus a copy-ready sentence for an email or a prompt.
+  Working hours are 9–5 in each zone's own time: a one-hour slot counts only if
+  it ends by 17:00, so 5 PM is fringe, and so is a half-hour zone's 4:30 PM.
 - **Drag the divider** on the right of the place column to widen it when a
   zone's full name does not fit; double-click the divider to reset. The width
   is remembered. Hovering a place or its subtitle shows the full text and the
@@ -143,7 +149,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 132 assertions covering DST
+`index.html?selftest=1` locally. It runs 174 assertions covering DST
 transitions, offset arithmetic, ISO weeks, the zone catalogue, the link codec
 and the clock-format logic, and prints a pass/fail table. Golden values were
 cross-checked against an independent implementation.

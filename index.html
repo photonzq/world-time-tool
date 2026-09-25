@@ -580,8 +580,8 @@ function synthLabel(tz){
   return "(UTC"+(off<0?"-":"+")+pad(Math.floor(a/60))+":"+pad(a%60)+") "+place;
 }
 
-/* ICU still lists the legacy spellings (Asia/Calcutta, not Asia/Kolkata), so
-   the modern name would otherwise be unsearchable. Search-only synonyms. */
+/* Where ICU keeps the legacy spelling (Asia/Calcutta, not Asia/Kolkata) the
+   modern name would otherwise be unsearchable. Search-only synonyms. */
 const ALIASES={
   "Asia/Calcutta":"Kolkata Bengaluru Bangalore India","Asia/Katmandu":"Kathmandu",
   "Asia/Rangoon":"Yangon","Asia/Saigon":"Ho Chi Minh","Europe/Kiev":"Kyiv",
@@ -595,9 +595,12 @@ const ALIASES={
 };
 
 /* The Windows list (139, nicely labelled) merged with everything else the
-   engine's ICU knows. Verified: ICU uses the same legacy spellings Windows
-   does and lists no Etc/* zones, so the two sets union cleanly by id --
-   no alias de-duplication needed. Costs nothing to ship and tracks Edge. */
+   engine's ICU knows. ICU lists no Etc/* zones, but whether it spells a zone
+   the legacy way (Asia/Calcutta, as Windows does) or the canonical way
+   (Asia/Kolkata) depends on the engine. So an id whose alias is already in the
+   list is skipped -- otherwise engines that canonicalise show India, Kyiv,
+   Nuuk and four others twice, some with conflicting offsets. The Windows entry
+   is added first and wins. Costs nothing to ship and tracks Edge. */
 /* Built lazily: probing 418 zones costs ~120 ms of formatter construction,
    which is dead weight at startup when only the handful of displayed rows
    need labels. Paid on first focus of the picker instead, where it is
@@ -607,7 +610,7 @@ function catalog(){
   if(CATALOG) return CATALOG;
   const out=[],seen=new Set(),now=Date.now();
   const add=(label,id)=>{
-    if(seen.has(id)) return;
+    if(seen.has(id)||(TZALIAS[id]&&seen.has(TZALIAS[id]))) return;
     let off; try{ off=offsetAt(now,id); }catch(e){ return; }
     seen.add(id);
     out.push([label,id,(label+" "+id.split("/").join(" ").split("_").join(" ")+
@@ -620,6 +623,7 @@ function catalog(){
   // abbreviations need a second format pass per zone and cost more than the
   // rest of the build put together, so they land just after the picker opens
   if(!ABBRS) setTimeout(enrichAbbrs,0);
+  if(!COUNTRIES) setTimeout(enrichCountries,0);
   return CATALOG;
 }
 /* Index both halves of the year so "CET" and "CEST" both find Berlin; the
@@ -634,6 +638,109 @@ function enrichAbbrs(){
   }
   ABBRS=true;
   if(onAbbrs) onAbbrs();
+}
+
+/* ---------- search ----------
+   Case, accents and curly quotes are folded, so "Sao Paulo" finds "São Paulo"
+   and "cote d'ivoire" finds CLDR's "Côte d’Ivoire". */
+function fold(t){
+  return String(t).normalize("NFD").replace(/[\u0300-\u036f]/g,"")
+    .replace(/[\u2018\u2019]/g,"'").toLowerCase();
+}
+/* A zone's key is a lowercase bag of words: label, id parts, aliases,
+   abbreviations, country names. Score the best place the query occurs --
+   whole word 3, start of a word 2, inside a word 1 -- so "india" puts India
+   ahead of Indiana and "usa" puts the United States ahead of Lusaka. This
+   matters beyond looks: Enter adds the first result. */
+function matchScore(key,v){
+  if(!v) return 0;
+  let best=0,i=key.indexOf(v);
+  while(i>=0&&best<3){
+    const pre=i===0||!/[a-z0-9]/.test(key[i-1]);
+    const e=i+v.length, post=e>=key.length||!/[a-z0-9]/.test(key[e]);
+    best=Math.max(best,pre?(post?3:2):1);
+    i=key.indexOf(v,i+1);
+  }
+  return best;
+}
+/* "utc+8", "gmt-3", "+5:30", "+0530", "utc−5" with a real minus sign. Returns
+   minutes east of UTC, or null if the query is not an offset. The sign is
+   required, so a bare number stays a text search. */
+function parseOffsetQuery(v){
+  const m=/^(?:utc|gmt)?\s*([+\-\u2212])\s*(\d{1,2})(?::?(\d{2}))?$/.exec(v);
+  if(!m) return null;
+  const h=+m[2], mi=m[3]?+m[3]:0;
+  if(h>14||mi>59) return null;
+  return (m[1]==="+"?1:-1)*(h*60+mi);
+}
+/* January and July offsets, cached on the entry: an offset query matches a
+   zone at that offset in either season, or now. The Windows labels carry the
+   standard offset and people type what they see on a clock, so both count. */
+function seasonOffs(z){
+  if(!z[5]){
+    const y=new Date().getUTCFullYear();
+    z[5]=[offsetAt(Date.UTC(y,0,15),z[1]),offsetAt(Date.UTC(y,6,15),z[1])];
+  }
+  return z[5];
+}
+/* An offset query ranks zones at that offset above any text match, because
+   the text match is where the trap is: "gmt+8" literally names Etc/GMT+8,
+   and POSIX inverts the sign of the Etc zones, so that one is UTC-8. It stays
+   findable, below the real UTC+8 zones and labelled with its true offset. */
+function searchZones(raw){
+  const C=catalog();
+  const v=fold(String(raw).trim());
+  if(!v) return C.slice(0,60);
+  const off=parseOffsetQuery(v);
+  const hits=[];
+  for(let i=0;i<C.length;i++){
+    const z=C[i];
+    let sc=matchScore(z[2],v);
+    if(off!==null){
+      const o=seasonOffs(z);
+      if(z[3]===off||o[0]===off||o[1]===off) sc=4;
+    }
+    if(sc) hits.push([sc,PRANK[z[1]]!==undefined?PRANK[z[1]]:99,i,z]);
+  }
+  /* Equal scores go to the zone people compare most (the POP rank the link
+     encoding already keeps), then catalogue order. Without it "usa" plus
+     Enter adds Honolulu, the westernmost of the US zones, not New York. */
+  hits.sort((a,b)=>b[0]-a[0]||a[1]-b[1]||a[2]-b[2]);
+  return hits.slice(0,60).map(h=>h[3]);
+}
+
+/* Country names, so "brazil", "germany" and "united kingdom" find their zones.
+   No data ships for this: CLDR already maps region -> zones (MX mode uses it)
+   and Intl.DisplayNames turns the region code into its English name. Only the
+   names people type differently from CLDR are added by hand. getTimeZones may
+   answer in either spelling, hence the TZALIAS fallback. Engines without it
+   skip the pass and keep the hand-written aliases above. */
+const COUNTRY_ABBR={US:"usa us",GB:"uk britain england scotland wales",AE:"uae",
+  CZ:"czech republic",TR:"turkey",NL:"holland",CI:"ivory coast",SZ:"swaziland"};
+let COUNTRIES=false;
+function enrichCountries(sync){
+  if(COUNTRIES||!CATALOG) return;
+  COUNTRIES=true;
+  let dn=null; try{ dn=new Intl.DisplayNames(["en"],{type:"region"}); }catch(e){}
+  const byId={}; for(const z of CATALOG) byId[z[1]]=z;
+  const letter=function(a){
+    for(let b=65;b<=90;b++){
+      const r=String.fromCharCode(a,b);
+      let zs=null; try{ zs=new Intl.Locale("und-"+r).getTimeZones(); }catch(e){}
+      if(!zs||!zs.length) continue;
+      let name=""; try{ name=dn?dn.of(r):""; }catch(e){}
+      if(name===r) name="";               // DisplayNames echoes unknown codes back
+      const words=fold(name+" "+(COUNTRY_ABBR[r]||"")).trim();
+      if(!words) continue;
+      for(const id of zs){ const z=byId[id]||byId[TZALIAS[id]]; if(z) z[2]+=" "+words; }
+    }
+  };
+  if(sync){ for(let a=65;a<=90;a++) letter(a); if(onAbbrs) onAbbrs(); return; }
+  /* The whole sweep is ~200 ms of Intl calls, which would stall typing if run
+     in one piece just as the picker opens. A letter per task is ~8 ms each. */
+  let a=65;
+  const step=function(){ letter(a++); if(a<=90) setTimeout(step,0); else if(onAbbrs) onAbbrs(); };
+  step();
 }
 
 /* Windows list first (it is small and has the good labels); only consult the
@@ -990,7 +1097,7 @@ function selftest(){
 
   // merged catalogue: Windows labels + everything else ICU knows
   eq("catalogue is lazy (not built at startup)",CATALOG===null,true);
-  const C=catalog(); enrichAbbrs();   // the test needs the deferred pass now
+  const C=catalog(); enrichAbbrs(); enrichCountries(true);   // the deferred passes, now
   const hit=q=>C.filter(z=>z[2].indexOf(q)>=0).length;
   eq("merged catalogue is larger than Windows alone",C.length>ZONES.length,true);
   eq("every Windows zone survives the merge",
@@ -1011,6 +1118,84 @@ function selftest(){
                  z[2].indexOf("cest")>=0).length,1);
   eq("synthLabel handles nested ids",
      synthLabel("America/Argentina/Catamarca").indexOf("Catamarca, Argentina")>0,true);
+  // --- catalogue: one entry per zone, whatever spelling ICU uses ---
+  eq("no zone appears under two alias spellings",
+     C.filter(z=>TZALIAS[z[1]]&&C.some(w=>w[1]===TZALIAS[z[1]])).length,0);
+  /* The line above only bites on engines that canonicalise. Make one: rebuild
+     the catalogue with ICU answering Asia/Kolkata, and check India is listed
+     once. Without the de-duplication this is 2. */
+  eq("catalogue keeps one entry per zone on engines that canonicalise ids",(()=>{
+      const sv=Intl.supportedValuesOf;
+      if(typeof sv!=="function") return 1;          // nothing to simulate against
+      const C0=CATALOG,A0=ABBRS,K0=COUNTRIES;
+      try{
+        Intl.supportedValuesOf=function(k){ const r=sv.call(Intl,k);
+          return k==="timeZone"?r.map(z=>z==="Asia/Calcutta"?"Asia/Kolkata":z):r; };
+        CATALOG=null; ABBRS=true; COUNTRIES=true;  // rebuild without the deferred passes
+        return catalog().filter(z=>z[1]==="Asia/Calcutta"||z[1]==="Asia/Kolkata").length;
+      }finally{ Intl.supportedValuesOf=sv; CATALOG=C0; ABBRS=A0; COUNTRIES=K0; }
+    })(),1);
+
+  // --- search ranking ---
+  const top=(q,k)=>searchZones(q).slice(0,k||1).map(z=>z[1]);
+  eq("matchScore: whole word",matchScore("asia calcutta india","india"),3);
+  eq("matchScore: start of a word",matchScore("america indiana knox","india"),2);
+  eq("matchScore: inside a word",matchScore("africa lusaka","usa"),1);
+  eq("matchScore: absent",matchScore("europe berlin","tokyo"),0);
+  eq("search 'india' ranks India above Indiana",top("india")[0],"Asia/Calcutta");
+  eq("search 'usa': the top 5 are all US zones (no Lusaka, no Jerusalem)",
+     searchZones("usa").slice(0,5).every(z=>z[2].indexOf("united states")>=0),true);
+  eq("search 'usa' + Enter would add New York, not Honolulu",top("usa")[0],"America/New_York");
+  eq("search 'utc+8' leads with Shanghai among the UTC+8 zones",top("utc+8")[0],"Asia/Shanghai");
+  eq("search 'uk' leads with London",top("uk")[0],"Europe/London");
+  eq("search 'new york' still leads with New York",top("new york")[0],"America/New_York");
+  eq("empty search keeps catalogue order",
+     searchZones("").map(z=>z[1]).join(),C.slice(0,60).map(z=>z[1]).join());
+  eq("search folds accents: 'são paulo'",
+     searchZones("são paulo").some(z=>z[1]==="America/Sao_Paulo"),true);
+  // --- country names (CLDR, plus the few people type differently) ---
+  eq("country search: 'brazil' finds Sao Paulo",
+     searchZones("brazil").some(z=>z[1]==="America/Sao_Paulo"),true);
+  eq("country search: 'united kingdom' leads with London",top("united kingdom")[0],"Europe/London");
+  eq("country search: 'germany' leads with Berlin",top("germany")[0],"Europe/Berlin");
+  eq("country search: 'turkey' finds Istanbul (CLDR says Türkiye)",
+     searchZones("turkey").some(z=>z[1]==="Europe/Istanbul"),true);
+  eq("country search: 'ukraine' finds Kyiv under its legacy id",
+     searchZones("ukraine").some(z=>z[1]==="Europe/Kiev"),true);
+  // --- offset queries ---
+  eq("parseOffsetQuery: utc+8",parseOffsetQuery("utc+8"),480);
+  eq("parseOffsetQuery: gmt-3",parseOffsetQuery("gmt-3"),-180);
+  eq("parseOffsetQuery: +5:30",parseOffsetQuery("+5:30"),330);
+  eq("parseOffsetQuery: +0530",parseOffsetQuery("+0530"),330);
+  eq("parseOffsetQuery: a real minus sign",parseOffsetQuery("utc\u22125"),-300);
+  eq("parseOffsetQuery: rejects +15",parseOffsetQuery("+15"),null);
+  eq("parseOffsetQuery: a name is not an offset",parseOffsetQuery("berlin"),null);
+  eq("parseOffsetQuery: bare 'utc' is not an offset",parseOffsetQuery("utc"),null);
+  const at=(z,o)=>z[3]===o||seasonOffs(z).indexOf(o)>=0;
+  eq("search 'gmt+8' leads with a zone that really is UTC+8",at(searchZones("gmt+8")[0],480),true);
+  eq("search 'gmt+8': Etc/GMT+8 (really UTC-8) is present, below every UTC+8 zone",(()=>{
+      const r=searchZones("gmt+8"), i=r.findIndex(z=>z[1]==="Etc/GMT+8");
+      return i>0&&r.slice(0,i).every(z=>at(z,480));
+    })(),true);
+  eq("search 'utc+5:30' finds India",searchZones("utc+5:30").some(z=>z[1]==="Asia/Calcutta"),true);
+  eq("search '-12' finds Etc/GMT+12, which really is UTC-12",
+     at(searchZones("-12")[0],-720)&&searchZones("-12").some(z=>z[1]==="Etc/GMT+12"),true);
+  eq("search 'utc+1' finds Berlin by its standard offset, in any season",
+     searchZones("utc+1").some(z=>z[1]==="Europe/Berlin"),true);
+
+  // --- working hours: a one-hour slot counts only if it ends by 17:00 ---
+  const wb=(h,mi)=>workBand({h:h,mi:mi||0});
+  eq("9:00 slot is working hours",wb(9),"biz");
+  eq("16:00 slot is working hours (ends 17:00)",wb(16),"biz");
+  eq("17:00 slot is fringe, not working (ends 18:00)",wb(17),"edge");
+  eq("7:00 and 8:00 slots are fringe",wb(7)+","+wb(8),"edge,edge");
+  eq("6:00 slot is off",wb(6),"off");
+  eq("21:00 slot is fringe, 22:00 is off",wb(21)+","+wb(22),"edge,off");
+  eq("half-hour zone: 9:30 slot is working hours",wb(9,30),"biz");
+  eq("half-hour zone: 16:30 slot runs to 17:30, so fringe",wb(16,30),"edge");
+  eq("half-hour zone: 8:30 slot starts before 9, so fringe",wb(8,30),"edge");
+  eq("quarter-hour zone: 16:45 slot is fringe",wb(16,45),"edge");
+
   // --- resizable frozen column ---
   eq("label width clamps below the minimum",clampLabW(10),LABW_MIN);
   eq("label width clamps above the maximum",clampLabW(9999),LABW_MAX);
@@ -1373,6 +1558,19 @@ function saveState(){
 /* ============================================================
    RENDER
    ============================================================ */
+/* One working-hours rule for the grid's green underline and the pinned chips,
+   so the two cannot drift apart again. A column is a one-hour slot, and it
+   counts as working time only if the whole hour fits inside 9-5: it starts at
+   9:00 or later and ends by 17:00. Minutes matter -- a +5:30 zone's 16:30 slot
+   runs to 17:30, so it is fringe, not working. Fringe is a slot starting in the
+   two hours before 9, or after 16:00 up to 22:00. */
+function workBand(w){
+  const m=w.h*60+w.mi;
+  if(m>=540&&m<=960) return "biz";
+  if((m>=420&&m<540)||(m>960&&m<1320)) return "edge";
+  return "off";
+}
+
 /* Continuous hour -> colour ramp. Anchor stops are interpolated linearly, so
    fractional-offset zones (:30, :45) land between them rather than snapping.
    Deliberately low contrast: night reads as a cool hue shift, not a dark block. */
@@ -1489,7 +1687,7 @@ function render(){
   const cellData=S.rows.map(tz=>instants.map(t=>wall(t,tz)));
   // a shared 9-5 window means nothing if it lands on someone's Saturday
   const allBiz=instants.map((_,i)=>cellData.every(r=>
-    r[i].h>=9&&r[i].h<=17&&r[i].wd!=="Sat"&&r[i].wd!=="Sun"));
+    workBand(r[i])==="biz"&&r[i].wd!=="Sat"&&r[i].wd!=="Sun"));
   // one instant for every row, so clocks cannot disagree with each other
   const NOW=Date.now();
   /* The offset badge and abbreviation describe the GRID, so they must be read
@@ -1588,9 +1786,7 @@ function render(){
       S.rows.map(tz=>{
         const w=wall(t,tz);
         const ts=hhmm(w,uses24(tz));
-        // same 9-5 rule as the grid's green underline
-        const band=(w.h>=9&&w.h<=17)?"w-biz"
-                  :((w.h>=7&&w.h<=8)||(w.h>=18&&w.h<=21))?"w-edge":"w-off";
+        const band="w-"+workBand(w);          // the grid's rule, not a copy of it
         const we=w.wd==="Sat"||w.wd==="Sun";
         // the date is stated once on the bar; only call out rows that differ
         const sameDay=w.y===hw.y&&w.mo===hw.mo&&w.d===hw.d;
@@ -1890,9 +2086,7 @@ function wire(){
   let hi=-1, list=[];
   const close=()=>{ drop.classList.remove("open"); hi=-1; };
   const show=()=>{
-    const v=q.value.trim().toLowerCase();
-    const C=catalog();
-    list=(v?C.filter(z=>z[2].indexOf(v)>=0):C).slice(0,60);
+    list=searchZones(q.value);
     if(!list.length){ close(); return; }
     drop.innerHTML=list.map((z,i)=>'<div data-i="'+i+'"><span class="off">'+
       utcPart(z[0])+'</span>'+shortName(z[0])+
@@ -1901,8 +2095,11 @@ function wire(){
     drop.classList.add("open");
     [...drop.children].forEach(el=>el.onmousedown=e=>{ e.preventDefault(); pick(+el.dataset.i); });
   };
-  // repaint once the deferred abbreviation pass lands, if still open
-  onAbbrs=()=>{ if(drop.classList.contains("open")) show(); };
+  /* Repaint when a deferred pass (abbreviations, country names) lands. Not
+     only when open: a query typed or pasted before the pass matched nothing,
+     which closed the list, and it has to reopen now that it does match. */
+  onAbbrs=()=>{ if(drop.classList.contains("open")||
+                   (document.activeElement===q&&q.value.trim())) show(); };
 
   /* Draw now, and again on the next task as a safety net. Not rAF alone:
      that is throttled while the page is not painting, which would leave the
