@@ -70,10 +70,14 @@ both of which are restricted on `file://`.
 - **DST drift warnings.** A recurring meeting stays fixed in the home clock,
   and when another zone changes its clocks on a different date, the gap moves.
   The bar only says so when it bears on this meeting — a change *during* it,
-  or in the three days after it ends:
-  - "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week"
+  or in the three days before it starts or after it ends:
   - "Berlin: gap to New York drops to 5 h during the meeting, at 9:00 PM New
     York time"
+  - "Berlin: gap to New York dropped to 5 h on Sun 25 Oct, back to 6 h from Sun
+    1 Nov" — why this meeting's gap differs from last week's
+  - "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week"
+
+  At most one note per zone, in that order of priority.
 
   Zones in one country change at 2 AM local, not at one instant, so New York
   and Chicago agree for an hour every November night. Flips like that are
@@ -197,7 +201,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 246 assertions, covering:
+`index.html?selftest=1` locally. It runs 250 assertions, covering:
 - DST transitions, offset arithmetic, ISO weeks
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length

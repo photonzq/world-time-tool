@@ -1531,7 +1531,7 @@ function selftest(){
       const L="DESCRIPTION:"+"\u00e9\u2013x".repeat(40);
       return foldIcs(L).replace(/\r\n /g,"")===L; })(),true);
 
-  // --- DST drift: only a change during the meeting, or within 3 days after ---
+  // --- DST drift: only a change during the meeting, or 3 days either side ---
   {
     const S0=S, ny="America/New_York";
     S={rows:[ny,"Europe/Berlin","Australia/Sydney","America/Chicago","America/Phoenix",
@@ -1565,6 +1565,15 @@ function selftest(){
        of(notes(at(2026,3,7,23,0),240),"Havana"),
        "Havana: gap to New York rises to 1 h during the meeting, at 12:00 AM New York time, "+
        "for 2 hours");
+    // the 3 days before: what set the gap this meeting has
+    eq("drift: 2 days after Europe's change, the note looks back",
+       of(notes(at(2026,10,27,9,0),60),"Berlin"),
+       "Berlin: gap to New York dropped to 5 h on Sun 25 Oct, back to 6 h from Sun 1 Nov");
+    eq("drift: the day after New York's change",of(notes(at(2026,11,2,9,0),60),"Berlin"),
+       "Berlin: gap to New York rose to 6 h on Sun 1 Nov");
+    eq("drift: 4 days after, quiet again",of(notes(at(2026,11,5,9,0),60),"Berlin"),undefined);
+    eq("drift: an overnight flip just before the meeting is not news either",
+       of(notes(at(2026,11,2,9,0),60),"Chicago"),undefined);
     eq("durWords: hours under a day, then days or weeks",
        [3600000,2*3600000,7.2*86400000,8*86400000,20.75*86400000].map(durWords).join(" | "),
        "one hour | 2 hours | one week | 8 days | 3 weeks");
@@ -1811,8 +1820,9 @@ function canShare(){
    changes its clocks on a different date the gap between them moves -- for
    three weeks in March and one in October/November between New York and
    Europe. Only worth saying when it bears on this meeting: a change during
-   the pinned meeting, or in the three days after it ends. A change five weeks
-   out is not news today, and saying it on every pin was just noise.
+   the pinned meeting, or in the three days before it starts or after it
+   ends. A change five weeks out is not news today, and saying it on every
+   pin was just noise.
    The moment is found exactly -- an hourly scan, then bisection to the
    minute -- because "within three days" has to be judged on the real instant,
    not on one sample a day. */
@@ -1865,34 +1875,58 @@ function changeClock(c,tz){
 }
 /* Zones in one country do not change at one instant: each moves at 2 AM
    local, so New York and Chicago show the same time for an hour every
-   November night. A flip that comes back within a day is only news when it
-   lands inside the meeting; after it, it is skipped and the scan goes on. */
+   November night. A flip undone within a day is only news when it lands
+   inside the meeting; anywhere else it is skipped and the search goes on.
+   scanGap returns the next change in (from, to] on those terms: the gap just
+   before it (gb), the gap after (g1), and when it was undone if brief (r). */
+function scanGap(from,to,tz,keepBrief){
+  for(let f=from;;){
+    const c=nextGapChange(f,to,tz);
+    if(c===null) return null;
+    const gb=gapAt(c-60000,tz), r=nextGapChange(c,c+86400000,tz),
+          brief=r!==null&&gapAt(r,tz)===gb;
+    if(brief&&!keepBrief){ f=r; continue; }
+    return {c:c,gb:gb,g1:gapAt(c,tz),r:brief?r:null};
+  }
+}
+/* At most one note per zone, the most telling first: a change during the
+   meeting; else the last lasting change in the 3 days before it, which set
+   the gap the meeting has (and why it differs from last week's); else the
+   first lasting change in the 3 days after it. */
 function driftNotes(t0,t1){
   const key=S.home+"|"+S.rows.join(",")+"|"+t0+"|"+t1;
   if(key===_driftKey) return _driftVal;
-  const notes=[], end=t1+DRIFT_SOON;
+  const notes=[], home=cityOf(S.home), LOOK=56*86400000;
+  const move=(a,b,past)=>Math.abs(b)<Math.abs(a)?(past?"dropped":"drops")
+                                                :(past?"rose":"rises");
   for(const tz of S.rows){
     if(tz===S.home) continue;
-    const g0=gapAt(t0,tz);
-    for(let from=t0;;){
-      const c=nextGapChange(from,end,tz);
-      if(c===null) break;                            // nothing soon: say nothing
-      const g1=gapAt(c,tz), c2=nextGapChange(c,c+56*86400000,tz),
-            g2=c2===null?null:gapAt(c2,tz), brief=c2!==null&&g2===g0&&c2-c<86400000;
-      if(c>=t1&&brief){ from=c2; continue; }         // an overnight flip, after the meeting
-      let t=cityOf(tz)+": gap to "+cityOf(S.home)+" "+
-        (Math.abs(g1)<Math.abs(g0)?"drops":"rises")+" to "+gapWords(g1);
-      if(c<t1){
-        t+=" during the meeting, at "+changeClock(c,S.home)+" "+cityOf(S.home)+" time"+
-          (brief?", for "+durWords(c2-c):"");
-      }else{
-        t+=" from "+changeDay(c,tz);
-        if(c2!==null)
-          t+=g2===g0?", for "+durWords(c2-c):", then "+gapWords(g2)+" from "+changeDay(c2,tz);
+    const head=cityOf(tz)+": gap to "+home+" ";
+    let t=null;
+    const d=scanGap(t0,t1,tz,true);                       // during
+    if(d&&d.c<t1)
+      t=head+move(d.gb,d.g1)+" to "+gapWords(d.g1)+" during the meeting, at "+
+        changeClock(d.c,S.home)+" "+home+" time"+(d.r?", for "+durWords(d.r-d.c):"");
+    if(!t){                                               // the 3 days before
+      let last=null;
+      for(let f=t0-DRIFT_SOON,q;(q=scanGap(f,t0,tz,false));f=q.c) last=q;
+      if(last){
+        t=head+move(last.gb,last.g1,true)+" to "+gapWords(last.g1)+" on "+changeDay(last.c,tz);
+        const nx=scanGap(t0,t0+LOOK,tz,false);
+        if(nx) t+=(nx.g1===last.gb?", back to ":", then ")+gapWords(nx.g1)+
+                  " from "+changeDay(nx.c,tz);
       }
-      notes.push(t);
-      break;
     }
+    if(!t){                                               // the 3 days after
+      const u=scanGap(t0,t1+DRIFT_SOON,tz,false);
+      if(u){
+        t=head+move(u.gb,u.g1)+" to "+gapWords(u.g1)+" from "+changeDay(u.c,tz);
+        const fu=scanGap(u.c,u.c+LOOK,tz,false);
+        if(fu) t+=fu.g1===u.gb?", for "+durWords(fu.c-u.c)
+                              :", then "+gapWords(fu.g1)+" from "+changeDay(fu.c,tz);
+      }
+    }
+    if(t) notes.push(t);
   }
   _driftKey=key; _driftVal=notes;
   return notes;
@@ -2462,7 +2496,7 @@ function render(){
           (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
           (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
       }).join("")+'</div>'+
-      (drift.length?'<div class="drift" title="A clock change during this meeting, or in the three days after it">'+
+      (drift.length?'<div class="drift" title="A clock change during this meeting, or in the three days before or after it">'+
         drift.slice(0,3).map(x=>'<div>&#9888; '+esc(x)+'</div>').join("")+
         (drift.length>3?'<div>&hellip; and '+(drift.length-3)+' more</div>':"")+'</div>':"")+
       '<div class="pinsent"><span id="psText">'+pinSentence(t0,t1)+'</span>'+
