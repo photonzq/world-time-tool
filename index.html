@@ -1663,6 +1663,29 @@ function selftest(){
     pinMin=M0; pinLen=L0;
   }
 
+  // --- shift pin: intraday, rolling across midnight next/prev ---
+  {
+    const S0=S, P0=pinned, N0=lastN, C0=lastNowCol;
+    S={rows:["America/New_York"],home:"America/New_York",date:{y:2026,mo:9,d:22},fmt:"12"};
+    lastN=24; lastNowCol=10; pinned=14;
+    shiftPin(1);
+    eq("shiftPin intraday +1",pinned+" "+dkey(S.date),"15 2026-9-22");
+    shiftPin(-1);
+    eq("shiftPin intraday -1",pinned+" "+dkey(S.date),"14 2026-9-22");
+    pinned=23;
+    shiftPin(1);
+    eq("shiftPin wraps across midnight to next day",pinned+" "+dkey(S.date),"0 2026-9-23");
+    shiftPin(-1);
+    eq("shiftPin wraps backwards across midnight to prev day",pinned+" "+dkey(S.date),"23 2026-9-22");
+    S.date={y:2026,mo:3,d:9}; pinned=0; lastN=24;
+    shiftPin(-1);
+    eq("shiftPin backwards into DST spring-forward 23h day",pinned+" "+dkey(S.date),"22 2026-3-8");
+    pinned=null;
+    shiftPin(1);
+    eq("shiftPin when unpinned defaults to lastNowCol",pinned,10);
+    S=S0; pinned=P0; lastN=N0; lastNowCol=C0;
+  }
+
   // --- calendar file ---
   {
     const t0=Date.UTC(2026,8,22,13,15), t1=Date.UTC(2026,8,22,14,45);
@@ -2718,11 +2741,9 @@ function render(){
             ' title="End one hour later">+1h</button></span></span>'+
         /* the whole meeting an hour either way -- on a phone, easier than
            landing a thumb on a 28 px column */
-        '<span class="pgrp"><em>move</em><span class="plen pmove">'+
-          '<button data-mv="-1"'+(pinned<=0?" disabled":"")+
-            ' title="Whole meeting one hour earlier">&lsaquo; 1h</button>'+
-          '<button data-mv="1"'+(pinned>=N-1?" disabled":"")+
-            ' title="Whole meeting one hour later">1h &rsaquo;</button></span></span></span>'+
+        '<span class="pgrp"><em>shift</em><span class="plen pmove">'+
+          '<button data-mv="-1" title="Shift meeting one hour earlier (rolls across days)">&lsaquo; 1h</button>'+
+          '<button data-mv="1" title="Shift meeting one hour later (rolls across days)">1h &rsaquo;</button></span></span></span>'+
       '<span class="spacer"></span>'+
       '<span class="pinlegend"><em><i style="background:var(--biz)"></i>9&ndash;5</em>'+
       '<em><i style="background:#e0a340"></i>fringe</em>'+
@@ -2805,6 +2826,23 @@ document.addEventListener("pointermove",function(e){
    / search, C copy the sentence, Esc clear the pin. Never while typing, and
    never with a modifier, so Ctrl+C, Cmd+[ and the rest keep their meaning. */
 let lastN=0, lastNowCol=-1;                // written by render()
+function shiftPin(d){
+  if(pinned===null){
+    pinned=lastNowCol>=0?lastNowCol:Math.min(9,Math.max(0,lastN-1));
+  }else{
+    const target=pinned+d;
+    if(target<0){
+      S.date=addDays(S.date,-1);
+      const prevN=Math.ceil(hoursInDay(S.date.y,S.date.mo,S.date.d,S.home));
+      pinned=Math.max(0,prevN-1);
+    }else if(target>=lastN){
+      S.date=addDays(S.date,1);
+      pinned=0;
+    }else{
+      pinned=target;
+    }
+  }
+}
 /* Bring the pinned meeting into view. "center" puts it mid-grid -- a link
    just opened; "min" scrolls only as far as needed -- the pin was nudged. A
    meeting wider than the view starts at its left edge. The sticky label
@@ -2840,8 +2878,7 @@ document.addEventListener("keydown",function(e){
   const k=e.key;
   if((k==="ArrowLeft"||k==="ArrowRight")&&lastN>0){
     e.preventDefault();
-    if(pinned===null) pinned=lastNowCol>=0?lastNowCol:Math.min(9,lastN-1);
-    else pinned=Math.max(0,Math.min(lastN-1,pinned+(k==="ArrowLeft"?-1:1)));
+    shiftPin(k==="ArrowLeft"?-1:1);
     saveState(); render(); revealPin("min");
   }else if(k==="["||k==="]"){
     S.date=addDays(S.date,k==="["?-1:1); pinned=null; saveState(); render();
@@ -3382,9 +3419,9 @@ function wire(){
   $$("[data-best]").forEach(a=>a.onclick=()=>{
     pinned=+a.dataset.best; saveState(); render(); revealPin("min");
   });
-  // (the pinned bar's move buttons: the phone's stand-in for the arrow keys)
+  // (the pinned bar's shift buttons: the phone's stand-in for the arrow keys)
   $$("[data-mv]").forEach(b=>b.onclick=()=>{
-    pinned=Math.max(0,Math.min(lastN-1,pinned+ +b.dataset.mv));
+    shiftPin(+b.dataset.mv);
     saveState(); render(); revealPin("min");
   });
   $$(".pseg button").forEach(b=>b.onclick=()=>{
