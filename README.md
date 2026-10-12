@@ -51,7 +51,16 @@ both of which are restricted on `file://`.
 - **Correct DST**, including the awkward cases: 23/24/25-hour days, Lord Howe's
   half-hour shift, zones whose local midnight does not exist, and dates a zone
   skipped entirely when it crossed the date line.
-- **Pin a meeting.** Click a column, or on desktop drag across several. The
+- **Pin a meeting.** Click or tap a column, or drag across several to pick a
+  span of hours. With a mouse that always works. With a finger or pen it works
+  when the whole day fits on screen, as on a tablet or a Surface in landscape:
+  a sideways drag selects, while an up/down swipe still scrolls the page.
+  Where the grid has to scroll sideways (a phone, a tablet in portrait, a
+  narrow window), a sideways swipe scrolls it, and you press and hold for a
+  third of a second, then drag. Dragging toward either side scrolls the hours
+  along. Once a meeting is pinned, **grips** on both sides of its outline move
+  the start or the end by quarter hours, with the time shown while you drag;
+  they work by finger, pen and mouse, and dragging one never scrolls. The
   pinned bar sets the **start** and the **stop**, each to the quarter hour
   (`:00` `:15` `:30` `:45`). The length between them is shown with **−1h** and
   **+1h** to move the end by whole hours, from 15 minutes up to 256 hours —
@@ -64,8 +73,9 @@ both of which are restricted on `file://`.
   local range, coloured by working hours over the *whole* meeting: 9–5 in that
   zone's own time, so a meeting counts only if it ends by 17:00. A 2-hour
   meeting at 4 PM is fringe even though the 4 PM column is green. **‹ 1h** and
-  **1h ›** move the whole meeting an hour either way, keeping its shape — on a
-  phone, easier than hitting a narrow column. A shared link opens with the
+  **1h ›** shift the whole meeting an hour either way, keeping its shape and
+  rolling into the previous or next day at midnight — on a phone, easier than
+  hitting a narrow column. A shared link opens with the
   pinned meeting in view. From the bar:
   - **Copy sentence** — prose for an email or a prompt, ending in an ISO 8601
     interval
@@ -93,6 +103,9 @@ both of which are restricted on `file://`.
   only mentioned when they fall inside the meeting.
 - **Keyboard:** `←` `→` move the pin, `[` `]` change day, `T` today, `/` search,
   `C` copy the sentence, `Esc` clear the pin.
+- **Touchscreen laptops and tablets** follow whichever input was used last:
+  hover hints and the column crosshair come back as soon as the touchpad or
+  mouse moves again, without a reload.
 - **Reorder and undo.** Drag the ▲ on desktop, or press and hold a row on a
   phone, to move it. Removing a row, **Reset** and changing the home zone can
   each be undone for six seconds.
@@ -226,7 +239,7 @@ days come out right.
 ## Tests
 
 Open [`?selftest=1`](https://photonzq.github.io/world-time-tool/?selftest=1), or
-`index.html?selftest=1` locally. It runs 290 assertions, covering:
+`index.html?selftest=1` locally. It runs 306 assertions, covering:
 - DST transitions, offset arithmetic, ISO weeks and the week calendar
 - the zone catalogue, search ranking and name mapping
 - the link codec, including every meeting start and length

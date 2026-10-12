@@ -336,6 +336,30 @@ button.wknum:active{filter:brightness(.94)}
 /* the span being dragged out, before it becomes a pin */
 .selbox{position:absolute;border:1.5px dashed var(--accent);border-radius:8px;
   background:rgba(47,111,208,.06);pointer-events:none;z-index:2}
+/* A day that fits on screen has nothing to scroll sideways, so its cells take
+   only vertical pans: a finger or pen dragged sideways selects hours, as the
+   mouse does, while an up/down swipe still scrolls the page. Where the grid
+   scrolls (.scrolls) a sideways swipe stays a scroll. pinch-zoom is kept where
+   the engine knows the value; the plain pan-y before it is the fallback. */
+.gwrap:not(.scrolls) .c{touch-action:pan-y;touch-action:pan-y pinch-zoom}
+/* grips on the pinned meeting's two sides: drag one to move that edge.
+   touch-action:none, so a finger or pen on a grip never scrolls anything.
+   Above the now bar (3), under the sticky place column (7). */
+.pgrip{position:absolute;z-index:6;width:22px;height:40px;transform:translate(-50%,-50%);
+  cursor:ew-resize;touch-action:none;display:flex;align-items:center;justify-content:center}
+.pgrip::before{content:"";width:7px;height:24px;border-radius:4px;background:#fff;
+  border:1.5px solid #7c8b9c;box-shadow:0 1px 3px rgba(16,32,55,.22)}
+.pgrip:hover::before,.pgrip.on::before{border-color:var(--accent);background:var(--accent-soft)}
+/* a fingertip needs more than a mouse: any touchscreen, a Surface included */
+@media (any-pointer:coarse){
+  .pgrip{width:34px;height:54px}
+  .pgrip::before{width:9px;height:30px}
+}
+/* the time an edge is being dragged to */
+.gtip{position:absolute;z-index:8;transform:translate(-50%,-100%);background:#1f2933;
+  color:#fff;font-size:11px;font-weight:bold;padding:3px 7px;border-radius:5px;
+  white-space:nowrap;pointer-events:none}
+html.pgdrag,html.pgdrag *{cursor:ew-resize!important}
 .c.allbiz::after{content:"";position:absolute;bottom:0;left:0;right:0;height:3px;
   background:var(--biz)}
 
@@ -1389,6 +1413,28 @@ function selftest(){
   eq("ISO week 2027-01-01 (Fri) still 2026",wk(2027,1,1),"2026-W53");
   eq("ISO week 2027-01-04 (Mon) starts 2027",wk(2027,1,4),"2027-W1");
   eq("ISO week 2028-02-29 (leap day)",wk(2028,2,29),"2028-W9");
+
+  // --- grips: dragging the pinned meeting's edges (minutes past home midnight) ---
+  eq("gripSet: the end snaps to the nearest quarter hour",
+     gripSet("e",607,540,600,1440).join()+" "+gripSet("e",608,540,600,1440).join(),"540,600 540,615");
+  eq("gripSet: the end stays at least 15 min after the start",gripSet("e",500,540,600,1440).join(),"540,555");
+  eq("gripSet: the end stops at the end of the day on screen",gripSet("e",1500,540,600,1440).join(),"540,1440");
+  eq("gripSet: ...which is 23 hours on a spring-forward day",gripSet("e",1440,540,600,1380).join(),"540,1380");
+  eq("gripSet: the start moves, the end stays",gripSet("s",487,540,600,1440).join(),"480,600");
+  eq("gripSet: the start stays at least 15 min before the end",gripSet("s",700,540,600,1440).join(),"585,600");
+  eq("gripSet: the start stops at the grid's first minute",gripSet("s",-40,540,600,1440).join(),"0,600");
+  eq("gripSet: a meeting running past the day keeps its end",gripSet("s",600,540,2000,1440).join(),"600,2000");
+  eq("gripSet: never longer than 256 h",gripSet("s",0,540,540+LEN_MAX,1440).join(),"540,"+(540+LEN_MAX));
+  {
+    const T=touchMode;
+    touchMode=false; const m=pinTip(false);
+    touchMode=true; const f=pinTip(false), h=pinTip(true);
+    touchMode=T;
+    eq("pinTip: mouse, finger on a grid that fits, finger on one that scrolls",m+" | "+f+" | "+h,
+       "Click a column to pin a meeting, or drag across several | "+
+       "Tap a column to pin a meeting, or drag across several | "+
+       "Tap a column to pin a meeting, or hold, then drag across several");
+  }
 
   // --- focus survives a re-render: the key that finds the button again ---
   {
@@ -2782,8 +2828,7 @@ function render(){
       new Date(anchor).toISOString().replace(".000Z","Z")+dayNote+'</span>'+
       '<span>Green underline = every zone in working hours (Mon&ndash;Fri 9&ndash;5)</span>'+
       '<span>Hatched = weekend</span>'+
-      '<span>'+(touchMode?"Tap any column to pin a meeting"
-        :"Click a column to pin a meeting, or drag across several")+'</span>'+
+      '<span id="pintip">'+pinTip(gridScrolls())+'</span>'+
       (touchMode?"":'<span class="kbd" title="Keyboard shortcuts">'+
         '&larr; &rarr; pin &middot; [ ] day &middot; T today &middot; / search &middot; '+
         'C copy &middot; Esc clear</span>')+'</footer>';
@@ -2805,24 +2850,139 @@ function render(){
    hover there. A mouse never fires touchstart; a finger always does, and on
    a hybrid the most recent input wins. */
 let hovCol=null, touchMode=false, gridScrollLeft=0, scrollKey="", dragged=false;
-/* Desktop shortcut for a meeting length: press on a column and drag across.
-   Mouse only -- on a touchscreen that gesture is a scroll. A plain click is
-   left to the cell's own click handler, so pinning works exactly as before.
-   Listened for on the document so a release outside the grid still ends it. */
+/* Press on a column and drag across to pick a span of hours. The mouse
+   always can. A finger or pen can when the whole day fits on screen: the
+   cells then take only vertical pans (touch-action, see the CSS), so a
+   sideways drag selects while an up/down swipe still scrolls the page. Where
+   the grid scrolls sideways a sideways swipe has to scroll it, and a press
+   held still for a third of a second starts the selection instead (wire(),
+   with touch events). A plain click or tap is left to the cell's own click
+   handler. Listened for on the document so a release outside the grid still
+   ends it. */
 let selDrag=null;
 function colAt(x,y){
   const el=document.elementFromPoint(x,y), c=el&&el.closest&&el.closest(".c,.hc");
   return c&&c.dataset.col!==undefined?+c.dataset.col:null;
 }
-document.addEventListener("pointermove",function(e){
+function gridScrolls(){
+  const g=document.querySelector(".gwrap");
+  return !!g&&g.scrollWidth>g.clientWidth+1;
+}
+/* anchored where the drag began, in either direction; the grid (one day) is
+   the practical limit, the ceiling only a formality */
+function selExtend(x,y){
   if(!selDrag) return;
-  const c=colAt(e.clientX,e.clientY); if(c===null) return;
-  // anchored where the drag began, in either direction; the grid (one day)
-  // is the practical limit, the ceiling only a formality
+  const c=colAt(x,y); if(c===null) return;
   const cap=Math.floor(LEN_MAX/60)-1;
   const a=c<selDrag.s?Math.max(c,selDrag.s-cap):selDrag.s;
   const b=c<selDrag.s?selDrag.s:Math.min(c,selDrag.s+cap);
   if(a!==selDrag.a||b!==selDrag.b){ selDrag.a=a; selDrag.b=b; placeOverlays(); }
+}
+/* The span becomes the pinned meeting. A single column is left to the click
+   that follows -- unless the press was held (`one`), which no click follows.
+   After a finger or pen, a stray click on the cell where the drag began would
+   toggle the new pin straight off: swallow it. */
+function selCommit(d,one){
+  if(!(d.b>d.a||one)){ placeOverlays(); return; }
+  if(d.touch){ suppressTap=true; setTimeout(()=>{ suppressTap=false; },600); }
+  pinned=d.a; pinMin=0; pinLen=(d.b-d.a+1)*60; saveState(); render();
+}
+document.addEventListener("pointermove",function(e){
+  if(!selDrag||selDrag.held||e.pointerId!==selDrag.id) return;
+  selExtend(e.clientX,e.clientY); edgeScroll(e.clientX,e.clientY,selExtend);
+});
+/* The footer's how-to, for the input in use and the grid as laid out. */
+function pinTip(scrolls){
+  return !touchMode?"Click a column to pin a meeting, or drag across several"
+    :"Tap a column to pin a meeting, or "+(scrolls?"hold, then drag":"drag")+" across several";
+}
+function syncTip(){
+  const t=document.getElementById("pintip"), s=pinTip(gridScrolls());
+  if(t&&t.textContent!==s) t.textContent=s;
+}
+/* Dragging toward either side of a grid that scrolls sideways scrolls it, so
+   a selection or a grip can reach hours that are off screen. The left side is
+   where the sticky place column ends, not the grid's own edge. */
+let edgeRaf=0, edgeAt=null;
+function edgeScroll(x,y,fn){
+  edgeAt={x:x,y:y,fn:fn};
+  if(!edgeRaf) edgeRaf=requestAnimationFrame(edgeTick);
+}
+function edgeTick(){
+  edgeRaf=0;
+  const gw=document.querySelector(".gwrap"), e=edgeAt;
+  if(!gw||!e) return;
+  const g=gw.getBoundingClientRect(), lab=gw.querySelector(".lab"),
+        L=lab?lab.getBoundingClientRect().right:g.left, Z=32;
+  const v=e.x>g.right-Z?Math.min(16,Math.ceil((e.x-g.right+Z)/3)+2)
+         :e.x<L+Z?-Math.min(16,Math.ceil((L+Z-e.x)/3)+2):0;
+  if(!v) return;
+  const x0=gw.scrollLeft; gw.scrollLeft=x0+v;
+  if(gw.scrollLeft===x0) return;                    // already at that end
+  e.fn(e.x,e.y);
+  edgeRaf=requestAnimationFrame(edgeTick);
+}
+function edgeStop(){ cancelAnimationFrame(edgeRaf); edgeRaf=0; edgeAt=null; }
+
+/* ---------- grips: drag the pinned meeting's start or end ----------
+   Two handles on the pinned outline, for finger, pen and mouse alike. The
+   dragged edge goes to the nearest quarter hour and the other stays put,
+   within the day on screen and the 15 min .. 256 h a meeting can last. */
+let gripDrag=null;
+/* Minutes past the grid's home midnight under client x, read off the ruler's
+   own cells -- columns are exact hours, DST days included. */
+function minuteAt(x){
+  const hc=document.querySelectorAll(".gwrap .hc[data-col]");
+  for(const h of hc){
+    const r=h.getBoundingClientRect();
+    if(x<r.right) return (+h.dataset.col)*60+Math.max(0,(x-r.left)/r.width*60);
+  }
+  return hc.length*60;
+}
+/* [start, end] in minutes when edge `which` ("s" or "e") is dragged to minute
+   m: snapped to the quarter hour, at least LEN_MIN and at most LEN_MAX long,
+   the start not before the grid, the end not past it (maxEnd). */
+function gripSet(which,m,s0,e0,maxEnd){
+  const q=Math.round(m/15)*15;
+  if(which==="s") return [Math.max(0,e0-LEN_MAX,Math.min(q,e0-LEN_MIN,maxEnd-LEN_MIN)),e0];
+  return [s0,Math.min(maxEnd,s0+LEN_MAX,Math.max(q,s0+LEN_MIN))];
+}
+function gripDown(e){
+  if(e.pointerType==="mouse"&&e.button!==0) return;
+  e.preventDefault(); e.stopPropagation();          // not a click or a selection beneath
+  const el=e.currentTarget, s0=pinned*60+pinMin, D=S.date;
+  gripDrag={el:el,which:el.dataset.grip,id:e.pointerId,s0:s0,e0:s0+pinLen,maxEnd:lastN*60,
+            anchor:zonedToInstant(D.y,D.mo,D.d,0,0,S.home).instant,moved:false};
+  try{ el.setPointerCapture(e.pointerId); }catch(err){}
+  el.classList.add("on"); document.documentElement.classList.add("pgdrag");
+  placeOverlays();                                  // brings up the time tip
+}
+function gripMove(x){
+  const g=gripDrag; if(!g) return;
+  const r=gripSet(g.which,minuteAt(x),g.s0,g.e0,g.maxEnd),
+        p=Math.floor(r[0]/60), pm=r[0]%60, pl=r[1]-r[0];
+  if(p===pinned&&pm===pinMin&&pl===pinLen) return;
+  pinned=p; pinMin=pm; pinLen=pl; g.moved=true; placeOverlays();
+}
+document.addEventListener("pointermove",function(e){
+  if(!gripDrag||e.pointerId!==gripDrag.id) return;
+  gripMove(e.clientX); edgeScroll(e.clientX,e.clientY,gripMove);
+});
+function gripUp(e){
+  if(!gripDrag||e.pointerId!==gripDrag.id) return;
+  const g=gripDrag; gripDrag=null; edgeStop();
+  document.documentElement.classList.remove("pgdrag");
+  if(!g.moved){ placeOverlays(); return; }
+  suppressTap=true; setTimeout(()=>{ suppressTap=false; },400);
+  saveState(); render();                            // the bar, chips and sentence catch up
+}
+document.addEventListener("pointerup",gripUp);
+document.addEventListener("pointercancel",gripUp);
+/* A held finger is a right-click to Windows and Android browsers: the menu
+   would open in the middle of a drag. Not while a touch drag (a selection, a
+   grip, a row being moved) is under way; a real right-click is untouched. */
+document.addEventListener("contextmenu",function(e){
+  if(reo||gripDrag||(selDrag&&selDrag.touch)) e.preventDefault();
 });
 /* ---------- keyboard ----------
    Left/Right move the pin (or pin the current hour), [ ] step a day, T today,
@@ -3165,11 +3325,14 @@ document.addEventListener("click",function(e){
   if(suppressTap){ suppressTap=false; e.stopPropagation(); e.preventDefault(); }
 },true);
 
-document.addEventListener("pointerup",function(){
-  if(!selDrag) return;
-  const d=selDrag; selDrag=null;
-  if(d.b>d.a){ pinned=d.a; pinMin=0; pinLen=(d.b-d.a+1)*60; saveState(); render(); }
-  else placeOverlays();
+document.addEventListener("pointerup",function(e){
+  if(!selDrag||selDrag.held||e.pointerId!==selDrag.id) return;
+  const d=selDrag; selDrag=null; edgeStop(); selCommit(d,false);
+});
+// the browser took the gesture after all -- an up/down swipe: drop the selection
+document.addEventListener("pointercancel",function(e){
+  if(!selDrag||selDrag.held||e.pointerId!==selDrag.id) return;
+  selDrag=null; edgeStop(); placeOverlays();
 });
 
 /* Every render rebuilds .gwrap, which resets its scrollLeft to 0 -- so the
@@ -3286,7 +3449,22 @@ function syncGridScroll(){
   }
   gridScrollLeft=gw.scrollLeft;
 }
-document.addEventListener("touchstart",function(){ touchMode=true; },{passive:true});
+let lastTouch=0;
+document.addEventListener("touchstart",function(){
+  lastTouch=Date.now();
+  if(!touchMode){ touchMode=true; syncTip(); }
+},{passive:true});
+document.addEventListener("touchend",function(){ lastTouch=Date.now(); },{passive:true});
+/* ...and back. On a hybrid -- a Surface, a touchscreen laptop -- the touchpad
+   or mouse taking over again brings hover back, rather than touch winning
+   until a reload. Only real movement counts, and not straight after a touch:
+   Windows moves the hidden cursor to where a finger tapped, and a cursor
+   resting over a grid that re-renders can produce a moveless event. */
+document.addEventListener("pointermove",function(e){
+  if(touchMode&&e.pointerType==="mouse"&&(e.movementX||e.movementY)&&Date.now()-lastTouch>1000){
+    touchMode=false; syncTip();
+  }
+},{passive:true});
 /* Column-spanning marks are drawn as single overlays rather than per-cell
    borders, which the row rules would otherwise chop into segments.
    Measured from the DOM so they stay exact at any width and while scrolling.
@@ -3296,7 +3474,9 @@ document.addEventListener("touchstart",function(){ touchMode=true; },{passive:tr
 function placeOverlays(){
   const gw=document.querySelector(".gwrap");
   if(!gw) return;
-  gw.querySelectorAll(".pinbox,.nowbar,.hoverbox,.selbox").forEach(e=>e.remove());
+  // a grip being dragged is kept: it holds the pointer
+  gw.querySelectorAll(".pinbox,.nowbar,.hoverbox,.selbox,.pgrip,.gtip").forEach(e=>{
+    if(!gripDrag||e!==gripDrag.el) e.remove(); });
   const rows=gw.querySelectorAll(".row:not(.hdr)");
   if(!rows.length) return;
   const g=gw.getBoundingClientRect();
@@ -3333,9 +3513,39 @@ function placeOverlays(){
     d.style.left=x0+"px"; d.style.top=Y(a)+"px";
     d.style.width=Math.max(4,x1-x0)+"px"; d.style.height=(b.bottom-a.top)+"px";
     gw.appendChild(d);
+    return {x0:x0,x1:x1,top:Y(a),h:b.bottom-a.top,cont:full>X(z)+z.width+0.5};
   };
-  if(pinned!==null) spanBox("pinbox",pinned,pinMin,pinLen);
-  if(selDrag&&selDrag.b>selDrag.a) spanBox("selbox",selDrag.a,0,(selDrag.b-selDrag.a+1)*60);
+  /* Grips on the pinned outline's two sides, at mid-height -- none at an end
+     that runs on past the day shown, nor while a new span is being dragged. */
+  const grip=(which,x,bx)=>{
+    let d=gripDrag&&gripDrag.which===which?gripDrag.el:null;
+    if(!d){
+      d=document.createElement("div"); d.className="pgrip"; d.dataset.grip=which;
+      d.title=which==="s"?"Drag to change the start":"Drag to change the end";
+      d.setAttribute("aria-hidden","true");
+      d.addEventListener("pointerdown",gripDown);
+      gw.appendChild(d);
+    }
+    d.style.left=x+"px"; d.style.top=(bx.top+bx.h/2)+"px";
+  };
+  if(pinned!==null){
+    const bx=spanBox("pinbox",pinned,pinMin,pinLen);
+    if(bx&&!selDrag){
+      grip("s",bx.x0,bx);
+      if(!bx.cont) grip("e",bx.x1,bx);
+      if(gripDrag){                      // the time the edge is going to
+        const m=pinned*60+pinMin+(gripDrag.which==="e"?pinLen:0), t=document.createElement("div");
+        t.className="gtip";
+        t.textContent=clockWords(wall(gripDrag.anchor+m*60000,S.home),uses24(S.home));
+        t.style.left=(gripDrag.which==="e"?bx.x1:bx.x0)+"px";
+        t.style.top=Math.max(22,bx.top+bx.h/2-26)+"px";
+        gw.appendChild(t);
+      }
+    }
+  }
+  // a held press shows its one column at once: the selection has begun
+  if(selDrag&&(selDrag.b>selDrag.a||selDrag.held))
+    spanBox("selbox",selDrag.a,0,(selDrag.b-selDrag.a+1)*60);
   else if(hovCol!==null&&hovCol!==pinned) colBox("hoverbox",hovCol);
 
   /* day-pill detail follows the measured cell width, so it also shrinks when
@@ -3344,6 +3554,7 @@ function placeOverlays(){
              .getBoundingClientRect().width;
   gw.classList.toggle("lbl-full",cw>=34);   // 34 = the grid's track minimum
   gw.classList.toggle("scrolls",gw.scrollWidth>gw.clientWidth+1);
+  syncTip();
 
   /* the now bar hangs off the bottom of the NOW pill rather than starting at
      the first row, so the marker reads as one continuous object */
@@ -3536,8 +3747,10 @@ function wire(){
     // clear hover on click too: a hybrid laptop reports hover:hover but a
     // tap on its touchscreen still never sends mouseleave
     c.onpointerdown=e=>{
-      if(e.pointerType!=="mouse"||e.button!==0) return;
-      const i=+c.dataset.col; selDrag={s:i,a:i,b:i};
+      // the mouse always; a finger or pen while the day fits on screen
+      if(e.pointerType==="mouse"?e.button!==0:gridScrolls()) return;
+      const i=+c.dataset.col;
+      selDrag={s:i,a:i,b:i,id:e.pointerId,touch:e.pointerType!=="mouse"};
     };
     c.onclick=()=>{
       if(dragged){ dragged=false; return; }   // that was a scroll, not a tap
@@ -3576,14 +3789,47 @@ function wire(){
     /* A swipe to scroll the grid ends in a click on whatever cell the finger
        started on, which would pin a column the user never meant to choose.
        Remember whether the touch travelled, and let the click handler bail.
-       .gwrap is rebuilt each render, so these never accumulate. */
-    let sx=0;
+       Where the grid scrolls sideways, a press held still for 350 ms starts
+       a selection instead (on a grid that fits, a sideways drag already does
+       -- the pointer path). From then on the touch must not scroll: its moves
+       are cancelled, and the grid is made unscrollable until it lifts, for an
+       engine that has already decided this touch may pan. Moving first is a
+       scroll, as before. .gwrap is rebuilt each render, so these never
+       accumulate. */
+    let sx=0, sy=0, holdT=0;
     gw2.addEventListener("touchstart",function(e){
-      sx=e.touches[0].clientX; dragged=false;
+      const t=e.touches[0]; sx=t.clientX; sy=t.clientY; dragged=false;
+      clearTimeout(holdT);
+      const c=e.touches.length===1&&e.target.closest&&e.target.closest(".c");
+      if(!c||!gridScrolls()) return;
+      const i=+c.dataset.col, g=gw2;
+      holdT=setTimeout(function(){
+        selDrag={s:i,a:i,b:i,touch:true,held:true};
+        g.style.overflowX="hidden";
+        placeOverlays();
+        if(navigator.vibrate) navigator.vibrate(12);
+      },350);
     },{passive:true});
     gw2.addEventListener("touchmove",function(e){
-      if(Math.abs(e.touches[0].clientX-sx)>8) dragged=true;
-    },{passive:true});
+      const t=e.touches[0];
+      if(selDrag&&selDrag.held){
+        if(e.cancelable) e.preventDefault();
+        selExtend(t.clientX,t.clientY); edgeScroll(t.clientX,t.clientY,selExtend);
+        return;
+      }
+      const dx=Math.abs(t.clientX-sx), dy=Math.abs(t.clientY-sy);
+      if(dx>8||dy>8) clearTimeout(holdT);         // it moved first: a scroll
+      if(dx>8) dragged=true;
+    },{passive:false});
+    const holdEnd=function(e){
+      clearTimeout(holdT);
+      if(!(selDrag&&selDrag.held)) return;
+      const d=selDrag; selDrag=null; edgeStop(); gw2.style.overflowX="";
+      if(e.type==="touchcancel"){ placeOverlays(); return; }
+      selCommit(d,true);
+    };
+    gw2.addEventListener("touchend",holdEnd);
+    gw2.addEventListener("touchcancel",holdEnd);
   }
   fitLabel();            // before the scroll maths: it changes the grid's width
   wireGrips();
@@ -3629,7 +3875,7 @@ if(location.search.indexOf("selftest")>=0){
   // since render() rebuilds the DOM and would eat the keystrokes
   setInterval(()=>{
     const q=document.getElementById("q");
-    if(document.hasFocus()&&document.activeElement!==q) render();
+    if(document.hasFocus()&&document.activeElement!==q&&!selDrag&&!gripDrag&&!reo) render();
   },30000);
   // the top-bar clock ticks on its own: one text node, no re-render
   setInterval(()=>{
