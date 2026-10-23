@@ -1105,6 +1105,8 @@ function longDate(instant,tz){
   return f.format(new Date(instant));
 }
 function shortDate(w){ return w.wd+" "+w.d+" "+titleMon(w.mo); }
+/* A ruler label: "9a" / "12p", or "09" in 24-hour. */
+function hourLab(w,h24){ return h24?pad(w.h):((w.h%12===0?12:w.h%12)+(w.h<12?"a":"p")); }
 function clockWords(w,h24){
   if(h24) return pad(w.h)+":"+pad(w.mi);
   const h=w.h%12===0?12:w.h%12;
@@ -1807,8 +1809,8 @@ function selftest(){
      gapWords(300)+"|"+gapWords(-570)+"|"+gapWords(345),"5 h|9.5 h|5 h 45 min");
 
   // --- least-bad slots ---
-  eq("hourCost: working, fringe near and far, late, asleep",
-     [10,8.5,7.5,17.5,18.5,20,21.5,23,3].map(hourCost).join(","),"0,0.5,1,0.5,1,2,3,4,6");
+  eq("hourCost: working, fringe near and far, evening, late, asleep",
+     [10,8.5,7.5,17.5,18.5,19.5,20.5,21.5,23,3].map(hourCost).join(","),"0,0.5,1,0.5,1,1.5,2,3,4,6");
   eq("slotCost: a 9:30 slot is all inside 9-5",slotCost({h:9,mi:30,wd:"Tue"}),0);
   eq("slotCost: 16:30 pays for its last half hour",slotCost({h:16,mi:30,wd:"Tue"}),0.25);
   eq("slotCost: a weekend hour costs what a weekday hour does",
@@ -1822,7 +1824,8 @@ function selftest(){
     };
     const stars=c=>bestHours(c,allBizOf(c)).join(",");
     const nyb=cd("America/New_York",["Europe/Berlin"],2026,10,24);
-    eq("least bad on a weekend: New York + Berlin, Sat 24 Oct -> 8, 9, 10 AM",stars(nyb),"8,9,10");
+    eq("least bad on a weekend: New York + Berlin, Sat 24 Oct -> 9 and 10 AM, inside both 9-5s",
+       stars(nyb),"9,10");
     eq("...with no green underline that day",allBizOf(nyb).some(Boolean),false);
     eq("...and the footer says why",bestNote(nyb,0),"Weekend");
     eq("New York + Bern, Sun 25 Oct (5 h apart that week) -> 9, 10, 11 AM",
@@ -1830,13 +1833,36 @@ function selftest(){
     const fri=cd("America/New_York",["Europe/Berlin"],2026,10,23);
     eq("a weekday with a shared 9-5: green underline, no stars",
        allBizOf(fri).filter(Boolean).length+" green, stars ["+stars(fri)+"]","2 green, stars []");
-    eq("New York + Shanghai, Sun 25 Oct: the morning and the evening option",
-       stars(cd("America/New_York",["Asia/Shanghai"],2026,10,25)),"7,8,20");
+    eq("New York + Shanghai, Sun 25 Oct: a morning and an evening option, both kept",
+       stars(cd("America/New_York",["Asia/Shanghai"],2026,10,25)),"7,8,19,20");
+    eq("New York + Tokyo, Tue 27 Oct: 6, 7 and 8 PM -- none drops out of the middle",
+       stars(cd("America/New_York",["Asia/Tokyo"],2026,10,27)),"18,19,20");
     const lbt=cd("America/Los_Angeles",["Europe/Berlin","Asia/Tokyo"],2026,9,22);
-    eq("LA + Berlin + Tokyo, Tue 22 Sep: 7 AM, 10 and 11 PM, as before",stars(lbt),"7,22,23");
+    eq("LA + Berlin + Tokyo, Tue 22 Sep: 11 PM, the one least bad",stars(lbt),"23");
     eq("...where it is a plain weekday with no shared 9-5",bestNote(lbt,0),
        "No hour has everyone in 9&ndash;5");
     eq("one zone alone gets no stars",stars(cd("America/New_York",[],2026,10,24)),"");
+    // half- and quarter-hour zones: scored on the minutes they actually get
+    eq("New York + Kolkata (+5:30), Tue 27 Oct -> 7, 8 and 9 AM",
+       stars(cd("America/New_York",["Asia/Kolkata"],2026,10,27)),"7,8,9");
+    eq("Kolkata at home + Berlin, Sat 24 Oct -> 1 to 5 PM India",
+       stars(cd("Asia/Kolkata",["Europe/Berlin"],2026,10,24)),"13,14,15,16");
+    const lk=cd("Europe/London",["Asia/Kolkata"],2026,10,27);
+    eq("London + Kolkata, Tue 27 Oct: a shared 9-5 (2:30 to 4:30 PM India), so green, no stars",
+       allBizOf(lk).filter(Boolean).length+" green, stars ["+stars(lk)+"]","2 green, stars []");
+    eq("New York + Kathmandu (+5:45), Tue 27 Oct -> 7, 8 and 9 AM",
+       stars(cd("America/New_York",["Asia/Kathmandu"],2026,10,27)),"7,8,9");
+    eq("New York + Tehran (+3:30), Tue 27 Oct -> 9 AM",
+       stars(cd("America/New_York",["Asia/Tehran"],2026,10,27)),"9");
+    eq("New York + St John's (-2:30), Sat 24 Oct -> 9 AM to 3 PM",
+       stars(cd("America/New_York",["America/St_Johns"],2026,10,24)),"9,10,11,12,13,14");
+    eq("costs are whole eighths, so a :30 or :45 zone ties exactly",
+       [{h:7,mi:30},{h:16,mi:45},{h:19,mi:15}].map(w=>slotCost(w)*8).join(","),"6,3,13");
+    eq("bestRuns: runs of consecutive hours",
+       JSON.stringify([[9,10],[7,8,19,20],[23],[]].map(bestRuns)),"[[[9,10]],[[7,8],[19,20]],[[23,23]],[]]");
+    eq("hourLab: ruler labels in both clocks",
+       [{h:0},{h:9},{h:12},{h:23}].map(w=>hourLab(w,false)+"/"+hourLab(w,true)).join(" "),
+       "12a/00 9a/09 12p/12 11p/23");
     // Auckland Monday 9 AM is Honolulu Sunday 10 AM: the clocks overlap, a weekend breaks it
     const akl=cd("Pacific/Auckland",["Pacific/Honolulu"],2026,10,26);
     eq("a weekday whose overlap lands on someone's weekend",bestNote(akl,0)+" / green "+
@@ -2231,20 +2257,24 @@ function driftNotes(t0,t1){
 
 /* ---------- least-bad slots ----------
    When no hour has every zone inside 9-5, score each hour by how much of it
-   falls outside working time across all zones, and star the best three.
+   falls outside working time across all zones, and star the least bad: every
+   hour tied for it, never one picked arbitrarily out of a tie.
    The night is graded, not flat: with 22:00-06:00 all equal, midnight for one
    person tied with a 9 PM / 6 AM split, and the stars landed on 12 AM and
-   1 AM in Los Angeles for LA + Berlin + Tokyo. Graded, they land on 7 AM and
-   10-11 PM there -- the slots people actually pick for that trio. The fringe
-   is graded too, the hour next to 9-5 at half the hour beyond it: flat, 7 AM
-   tied with 8 AM, and New York + Berlin on a Saturday got 7, 9 and 10 AM.
-   Scored in quarter hours so :30 and :45 zones are judged on the minutes they
-   get, and by the clock alone: a weekend is no reason to skip a zone. */
+   1 AM in Los Angeles for LA + Berlin + Tokyo; graded, on 11 PM there, with
+   7 AM and 10 PM next. Each hour further from 9-5 costs more than the one
+   before -- 8-9 AM and 5-6 PM half of 7-8 AM and 6-7 PM, 7-8 PM less than
+   8-9 PM -- since a flat band lets an hour drop out of the middle of a tie
+   (New York + Tokyo starred 6 and 8 PM but not 7). Scored in quarter hours,
+   so :30 and :45 zones -- India, Nepal, Newfoundland -- are judged on the
+   minutes they get; and by the clock alone: a weekend is no reason to skip a
+   zone. */
 function hourCost(t){
   if(t>=9&&t<17) return 0;
   if((t>=8&&t<9)||(t>=17&&t<18)) return 0.5;
   if((t>=7&&t<8)||(t>=18&&t<19)) return 1;
-  if(t>=19&&t<21) return 2;
+  if(t>=19&&t<20) return 1.5;
+  if(t>=20&&t<21) return 2;
   if((t>=6&&t<7)||(t>=21&&t<22)) return 3;
   if(t>=22||(t>=5&&t<6)) return 4;
   return 6;                               // 00:00-05:00, asleep
@@ -2260,14 +2290,24 @@ function allBizOf(cellData){
   return cellData[0].map((_,i)=>cellData.every(r=>
     workBand(r[i])==="biz"&&r[i].wd!=="Sat"&&r[i].wd!=="Sun"));
 }
-/* The three least-bad hours, or none. Only when there is no full overlap --
-   the green underline covers that case -- so always on a weekend, where the
-   underline never shows and the stars are what is left to go by. Two zones at
-   least, since one zone always has its own 9-5. */
+/* The least-bad hours: every hour at the lowest cost, or none. Only when
+   there is no full overlap -- the green underline covers that case -- so
+   always on a weekend, where the underline never shows and the stars are
+   what is left to go by. Two zones at least, since one zone always has its
+   own 9-5. Every cost is a multiple of 1/8 (half-point bands, quarter-hour
+   samples), so costs are compared in eighths, as integers: a tie is exact,
+   whatever a :30 or :45 zone adds. */
 function bestHours(cellData,allBiz){
   if(cellData.length<2||allBiz.some(Boolean)) return [];
-  return cellData[0].map((_,i)=>({i:i,c:cellData.reduce((a,r)=>a+slotCost(r[i]),0)}))
-    .sort((a,b)=>a.c-b.c||a.i-b.i).slice(0,3).map(x=>x.i).sort((a,b)=>a-b);
+  const c=cellData[0].map((_,i)=>Math.round(8*cellData.reduce((a,r)=>a+slotCost(r[i]),0)));
+  const m=Math.min.apply(null,c);
+  return c.reduce((o,v,i)=>v===m?o.concat(i):o,[]);
+}
+/* Consecutive starred hours as [first, last] runs, for the footer. */
+function bestRuns(best){
+  const r=[];
+  best.forEach(i=>{ const x=r[r.length-1]; if(x&&i===x[1]+1) x[1]=i; else r.push([i,i]); });
+  return r;
 }
 /* Why the stars are there. "No hour has everyone in 9-5" is untrue on a
    weekend whenever the clocks do overlap, so a weekend says so; a weekday
@@ -2740,8 +2780,7 @@ function render(){
     '<div class="cells" style="'+GT+'">';
   const home24=uses24(S.home), rulerLab=[];
   instants.forEach((t,i)=>{
-    const w=wall(t,S.home);
-    const lab=home24?pad(w.h):((w.h%12===0?12:w.h%12)+(w.h<12?"a":"p"));
+    const lab=hourLab(wall(t,S.home),home24);
     rulerLab[i]=lab;
     const edge=nowCol>=N-1?" pr":(nowCol<=0?" pl":"");
     html+='<div class="hc'+(i===nowCol?" iscur":"")+(pinCols.has(i)?" pin":"")+
@@ -2868,8 +2907,14 @@ function render(){
   }else{
     const dayNote=len===24?"":(" &middot; <b>"+len+"-hour day</b> here (DST transition)");
     pinSpan=null;
+    /* a run of stars reads as the window it opens -- 9a-11a for 9a and 10a;
+       its link pins the first hour. A run to the end of the day ends at the
+       next midnight, which has no column of its own. */
+    const endLab=i=>i<N?rulerLab[i]:hourLab(wall(anchor+N*3600000,S.home),home24);
     html+='<footer>'+(best.length?'<span class="bestline">'+bestNote(cellData,S.rows.indexOf(S.home))+' &middot; least bad: '+
-      best.map(i=>'<a class="lk" data-best="'+i+'">&#9733;'+rulerLab[i]+'</a>').join(" ")+'</span>':"")+
+      bestRuns(best).map(r=>'<a class="lk" data-best="'+r[0]+'"'+
+        (r[1]>r[0]?' title="Least bad from '+rulerLab[r[0]]+' to '+endLab(r[1]+1)+' &middot; click to pin '+rulerLab[r[0]]+'"':"")+
+        '>&#9733;'+rulerLab[r[0]]+(r[1]>r[0]?"&ndash;"+endLab(r[1]+1):"")+'</a>').join(" ")+'</span>':"")+
       '<span>'+N+' hours from '+
       new Date(anchor).toISOString().replace(".000Z","Z")+dayNote+'</span>'+
       '<span>Green underline = every zone in working hours (Mon&ndash;Fri 9&ndash;5)</span>'+

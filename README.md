@@ -82,13 +82,16 @@ both of which are restricted on `file://`.
   - **Add to calendar** — an `.ics` file generated in the page, times in UTC so
     any calendar converts them
   - **Share** — on phones, the system share sheet
-- **Least-bad hours.** When no hour has everyone inside 9–5, the three
-  least-bad hours are starred on the ruler and listed in the footer; click one
-  to pin it. That includes weekends, where the green 9–5 underline never shows
-  but the stars still do: a Saturday call between New York and Berlin gets 8,
-  9 and 10 AM New York. Hours are scored by the clock alone, weekend or not,
-  and weighted by how far they are from 9–5 — 8 AM beats 7 AM, and a 7 AM
-  start beats asking someone to join at midnight.
+- **Least-bad hours.** When no hour has everyone inside 9–5, the least-bad
+  hours are starred on the ruler — every hour tied for least bad, never one
+  picked arbitrarily out of a tie — and listed in the footer, a run of them
+  as the window it opens; click one to pin it. That includes weekends, where
+  the green 9–5 underline never shows but the stars still do: a Saturday call
+  between New York and Berlin reads "Weekend · least bad: ★9a–11a". Hours are
+  scored by the clock alone, weekend or not, each hour further from 9–5
+  costing more than the one before — 8 AM beats 7 AM, and a 7 AM start beats
+  asking someone to join at midnight. Scored in quarter hours, so half-hour
+  zones such as India (UTC+5:30) are judged on the minutes they actually get.
 - **DST drift warnings.** A recurring meeting stays fixed in the home clock,
   and when another zone changes its clocks on a different date, the gap moves.
   The bar only says so when it bears on this meeting — a change *during* it,
