@@ -1257,6 +1257,8 @@ function selftest(){
   eq("hoursInDay NY 2026-03-08 (spring fwd)",hoursInDay(2026,3,8,"America/New_York"),23);
   eq("hoursInDay NY 2026-11-01 (fall back)",hoursInDay(2026,11,1,"America/New_York"),25);
   eq("hoursInDay NY 2026-09-17 (normal)",hoursInDay(2026,9,17,"America/New_York"),24);
+  eq("hoursInDay Zurich 2026-10-25 (fall back: 2 AM twice)",hoursInDay(2026,10,25,"Europe/Zurich"),25);
+  eq("hoursInDay Zurich 2026-03-29 (spring fwd: no 2 AM)",hoursInDay(2026,3,29,"Europe/Zurich"),23);
   eq("hoursInDay LordHowe 2026-04-05",hoursInDay(2026,4,5,"Australia/Lord_Howe"),24.5);
   eq("hoursInDay LordHowe 2026-10-04",hoursInDay(2026,10,4,"Australia/Lord_Howe"),23.5);
   eq("hoursInDay Chatham 2026-09-27",hoursInDay(2026,9,27,"Pacific/Chatham"),23);
@@ -1757,7 +1759,7 @@ function selftest(){
       const L="DESCRIPTION:"+"\u00e9\u2013x".repeat(40);
       return foldIcs(L).replace(/\r\n /g,"")===L; })(),true);
 
-  // --- DST drift: only a change during the meeting, or 3 days either side ---
+  // --- DST drift: a change during the meeting or 5 days either side, else an unusual gap ---
   {
     const S0=S, ny="America/New_York";
     S={rows:[ny,"Europe/Berlin","Australia/Sydney","America/Chicago","America/Phoenix",
@@ -1765,12 +1767,14 @@ function selftest(){
     const at=(y,m,d,h,mi)=>zonedToInstant(y,m,d,h,mi,ny).instant;
     const notes=(t0,len)=>{ _driftKey=""; return driftNotes(t0,t0+len*60000); };
     const of=(d,c)=>d.find(x=>x.indexOf(c+":")===0);
-    eq("drift: nothing within 3 days of Tue 22 Sep, so no notes at all",
+    eq("drift: nothing within 5 days of Tue 22 Sep, and no unusual gap, so no notes at all",
        notes(at(2026,9,22,9,0),60).length,0);
     eq("drift: 3 days before Europe's change, Berlin is noted",
        of(notes(at(2026,10,22,9,0),60),"Berlin"),
        "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week");
-    eq("drift: 4 days before, it is not",of(notes(at(2026,10,21,9,0),60),"Berlin"),undefined);
+    eq("drift: 5 days before, too",of(notes(at(2026,10,20,9,0),60),"Berlin"),
+       "Berlin: gap to New York drops to 5 h from Sun 25 Oct, for one week");
+    eq("drift: 6 days before, not",of(notes(at(2026,10,19,9,0),60),"Berlin"),undefined);
     eq("drift: a change during the meeting says when, in home time",
        of(notes(at(2026,10,24,20,0),180),"Berlin"),
        "Berlin: gap to New York drops to 5 h during the meeting, at 9:00 PM New York time");
@@ -1791,15 +1795,32 @@ function selftest(){
        of(notes(at(2026,3,7,23,0),240),"Havana"),
        "Havana: gap to New York rises to 1 h during the meeting, at 12:00 AM New York time, "+
        "for 2 hours");
-    // the 3 days before: what set the gap this meeting has
+    // the 5 days before: what set the gap this meeting has
     eq("drift: 2 days after Europe's change, the note looks back",
        of(notes(at(2026,10,27,9,0),60),"Berlin"),
        "Berlin: gap to New York dropped to 5 h on Sun 25 Oct, back to 6 h from Sun 1 Nov");
     eq("drift: the day after New York's change",of(notes(at(2026,11,2,9,0),60),"Berlin"),
        "Berlin: gap to New York rose to 6 h on Sun 1 Nov");
-    eq("drift: 4 days after, quiet again",of(notes(at(2026,11,5,9,0),60),"Berlin"),undefined);
+    eq("drift: 4 days after, still said",of(notes(at(2026,11,5,9,0),60),"Berlin"),
+       "Berlin: gap to New York rose to 6 h on Sun 1 Nov");
+    eq("drift: 6 days after, quiet again",of(notes(at(2026,11,7,9,0),60),"Berlin"),undefined);
+    // further than 5 days from both ends of a mismatch: the gap against the usual one
+    eq("drift: mid-March, 10 days from either change: the gap is unusual",
+       of(notes(at(2026,3,18,9,0),60),"Berlin"),
+       "Berlin: gap to New York is 5 h until Sun 29 Mar (usually 6 h)");
+    eq("drift: Sydney between its change and New York's is a step, not a blip: nothing",
+       of(notes(at(2026,10,18,9,0),60),"Sydney"),undefined);
+    eq("drift: Phoenix in midsummer, its gap as usual: nothing",
+       of(notes(at(2026,7,15,9,0),60),"Phoenix"),undefined);
     eq("drift: an overnight flip just before the meeting is not news either",
        of(notes(at(2026,11,2,9,0),60),"Chicago"),undefined);
+    S={rows:[ny,"Europe/Zurich"],home:ny,date:{y:2026,mo:10,d:28},fmt:"12"};
+    eq("drift: Zurich, Wed 28 Oct, the middle of the autumn week",
+       of(notes(at(2026,10,28,10,0),60),"Zurich"),
+       "Zurich: gap to New York dropped to 5 h on Sun 25 Oct, back to 6 h from Sun 1 Nov");
+    eq("drift: every day of the March mismatch has a note (Zurich, 10 AM New York)",
+       [...Array(21)].map((_,k)=>{ const d=addDays({y:2026,mo:3,d:8},k);
+         return of(notes(at(d.y,d.mo,d.d,10,0),60),"Zurich")?"":d.d; }).filter(Boolean).join(","),"");
     eq("durWords: hours under a day, then days or weeks",
        [3600000,2*3600000,7.2*86400000,8*86400000,20.75*86400000].map(durWords).join(" | "),
        "one hour | 2 hours | one week | 8 days | 3 weeks");
@@ -2143,13 +2164,23 @@ function canShare(){
    changes its clocks on a different date the gap between them moves -- for
    three weeks in March and one in October/November between New York and
    Europe. Only worth saying when it bears on this meeting: a change during
-   the pinned meeting, or in the three days before it starts or after it
-   ends. A change five weeks out is not news today, and saying it on every
-   pin was just noise.
+   the pinned meeting, or in the five days before it starts or after it ends.
+   A change five weeks out is not news today, and saying it on every pin was
+   just noise. Further than five days from either change, a meeting can still
+   sit inside the mismatch -- the middle of those three weeks in March -- and
+   then its gap is not the usual one, which is said instead (USUAL).
    The moment is found exactly -- an hourly scan, then bisection to the
-   minute -- because "within three days" has to be judged on the real instant,
+   minute -- because "within five days" has to be judged on the real instant,
    not on one sample a day. */
-const DRIFT_SOON=3*86400000;
+const DRIFT_SOON=5*86400000;
+/* The usual gap: the one four weeks before and four weeks after, when those
+   two agree. A gap that differs from both is a temporary mismatch -- New York
+   and Europe for three weeks in March and one in October, Morocco during
+   Ramadan. Where they disagree, the pair is between two seasons (New York and
+   Sydney step 14, 15, 16 h through the autumn) and there is no usual gap to
+   compare with. Four weeks reaches past either end of any mismatch of up to
+   about a month. */
+const USUAL=28*86400000;
 let _driftKey="", _driftVal=[];
 function gapWords(m){
   const a=Math.abs(m), h=Math.floor(a/60), r=a%60;
@@ -2213,9 +2244,10 @@ function scanGap(from,to,tz,keepBrief){
   }
 }
 /* At most one note per zone, the most telling first: a change during the
-   meeting; else the last lasting change in the 3 days before it, which set
+   meeting; else the last lasting change in the 5 days before it, which set
    the gap the meeting has (and why it differs from last week's); else the
-   first lasting change in the 3 days after it. */
+   first lasting change in the 5 days after it; else, inside a mismatch but
+   further than that from both its ends, the gap against the usual one. */
 function driftNotes(t0,t1){
   const key=S.home+"|"+S.rows.join(",")+"|"+t0+"|"+t1;
   if(key===_driftKey) return _driftVal;
@@ -2230,7 +2262,7 @@ function driftNotes(t0,t1){
     if(d&&d.c<t1)
       t=head+move(d.gb,d.g1)+" to "+gapWords(d.g1)+" during the meeting, at "+
         changeClock(d.c,S.home)+" "+home+" time"+(d.r?", for "+durWords(d.r-d.c):"");
-    if(!t){                                               // the 3 days before
+    if(!t){                                               // the 5 days before
       let last=null;
       for(let f=t0-DRIFT_SOON,q;(q=scanGap(f,t0,tz,false));f=q.c) last=q;
       if(last){
@@ -2240,13 +2272,21 @@ function driftNotes(t0,t1){
                   " from "+changeDay(nx.c,tz);
       }
     }
-    if(!t){                                               // the 3 days after
+    if(!t){                                               // the 5 days after
       const u=scanGap(t0,t1+DRIFT_SOON,tz,false);
       if(u){
         t=head+move(u.gb,u.g1)+" to "+gapWords(u.g1)+" from "+changeDay(u.c,tz);
         const fu=scanGap(u.c,u.c+LOOK,tz,false);
         if(fu) t+=fu.g1===u.gb?", for "+durWords(fu.c-u.c)
                               :", then "+gapWords(fu.g1)+" from "+changeDay(fu.c,tz);
+      }
+    }
+    if(!t){                                               // inside a mismatch
+      const g=gapAt(t0,tz), gb=gapAt(t0-USUAL,tz), ga=gapAt(t0+USUAL,tz);
+      if(gb===ga&&g!==gb){
+        const nx=scanGap(t0,t0+USUAL,tz,false);
+        t=head+"is "+gapWords(g)+(nx&&nx.g1===gb?" until "+changeDay(nx.c,tz):"")+
+          " (usually "+gapWords(gb)+")";
       }
     }
     if(t) notes.push(t);
@@ -2896,7 +2936,7 @@ function render(){
           (sameDay?"":' <span>'+w.wd+" "+w.d+'</span>')+
           (we?'<span class="webadge">WEEKEND</span>':"")+'</span>';
       }).join("")+'</div>'+
-      (drift.length?'<div class="drift" title="A clock change during this meeting, or in the three days before or after it">'+
+      (drift.length?'<div class="drift" title="A clock change during this meeting or in the five days around it, or a gap that is not the usual one">'+
         drift.slice(0,3).map(x=>'<div>&#9888; '+esc(x)+'</div>').join("")+
         (drift.length>3?'<div>&hellip; and '+(drift.length-3)+' more</div>':"")+'</div>':"")+
       '<div class="pinsent"><span id="psText">'+pinSentence(t0,t1)+'</span>'+
